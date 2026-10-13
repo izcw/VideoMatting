@@ -1,0 +1,19 @@
+{
+  "matanyone2": {
+    "repository": "https://github.com/pq-yang/MatAnyone2",
+    "source_commit": "0079197acd6d16a741f71558809c06c586c579e0",
+    "asset_url": "https://api.github.com/repos/pq-yang/MatAnyone2/releases/assets/368133259",
+    "sha256": "5e9821e4087231427376b437c85bb6e072b41e582314f06fd524f75bc4af5914"
+  },
+  "selector": {
+    "name": "DeepLabV3 MobileNet V3 Large",
+    "url": "https://download.pytorch.org/models/deeplabv3_mobilenet_v3_large-fc3c493d.pth",
+    "sha256_prefix": "fc3c493d"
+  },
+  "sam2": {
+    "repository": "facebookresearch/sam2",
+    "source_commit": "2b90b9f5ceec907a1c18123530e92e794ad901a4",
+    "url": "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt",
+    "sha256": "7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69"
+  }
+}
