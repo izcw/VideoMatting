@@ -709,13 +709,13 @@ onBeforeUnmount(() => {
       <small>当前使用 {{ system.device }} · 本地处理</small>
       <div class="monitor-metrics">
         <div v-for="metric in monitorMetrics" :key="metric.name" class="monitor-metric">
-          <div class="usage-ring" :class="{ unavailable: metric.value === null, warning: metric.name === '内存' && (metric.value ?? 0) >= 95 }" :role="metric.value === null ? 'img' : 'progressbar'" :aria-label="`${metric.name}占用${metric.value === null ? '暂无数据' : ''}`" :aria-valuenow="metric.value ?? undefined" :aria-valuemin="metric.value === null ? undefined : 0" :aria-valuemax="metric.value === null ? undefined : 100" :style="{ '--usage': `${metric.value ?? 0}%` }">
+          <div class="usage-ring" :class="{ unavailable: metric.value === null, warning: (metric.value ?? 0) >= 95 }" :role="metric.value === null ? 'img' : 'progressbar'" :aria-label="`${metric.name}占用${metric.value === null ? '暂无数据' : ''}`" :aria-valuenow="metric.value ?? undefined" :aria-valuemin="metric.value === null ? undefined : 0" :aria-valuemax="metric.value === null ? undefined : 100" :style="{ '--usage': `${metric.value ?? 0}%` }">
             <span>{{ metric.value === null ? '—' : `${Math.round(metric.value)}%` }}</span>
           </div>
           <div class="metric-copy"><strong>{{ metric.name }}</strong><small>{{ metric.detail }}</small><div class="metric-history"><span>本任务最高 <b>{{ resourceHistory(metric.key, 'max') }}</b></span><span>本任务平均 <b>{{ resourceHistory(metric.key, 'average') }}</b></span></div></div>
         </div>
       </div>
-      <p class="monitor-note">{{ job ? `统计任务：${job.name}。最高与平均为该任务处理期间的整机占用采样，包含内存保护等待，不计入排队及结束后的空闲时间；同一任务恢复后继续累计。` : '选择一个任务后显示该任务的最高与平均占用；环形显示当前整机占用。' }} 无采样数据时显示“—”。内存达 95% 暂缓计算，低于 95% 后继续。</p>
+      <p class="monitor-note">{{ job ? `统计任务：${job.name}。最高与平均为该任务处理期间的整机占用采样，包含资源保护等待，不计入排队及结束后的空闲时间；同一任务恢复后继续累计。` : '选择一个任务后显示该任务的最高与平均占用；环形显示当前整机占用。' }} 无采样数据时显示“—”。CPU、GPU、内存或显存达到 95% 时暂缓进入下一计算步骤，低于 95% 后继续；单次计算仍可能短暂超过阈值。</p>
     </section>
     <section v-if="history.length || historyMessage" class="history">
       <h2 class="section-title">历史任务</h2>

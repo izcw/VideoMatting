@@ -11,6 +11,46 @@ from server.pipeline import ROOT, checkpoint, restore_checkpoint, Cancelled
 from server.inference_memory import bounded_similarity
 
 
+@pytest.fixture(autouse=True)
+def stable_compute_utilization(monkeypatch):
+    from server import resources
+    monkeypatch.setattr(resources.psutil, 'cpu_percent', lambda: 25)
+    monkeypatch.setattr(resources, 'gpu_snapshot', lambda: {'usage': 25})
+
+
+@pytest.mark.parametrize('device,kind', [('cpu', 'CPU'), ('cuda', 'GPU')])
+def test_compute_utilization_waits_at_95_and_resumes(monkeypatch, device, kind):
+    from server import resources
+    samples = iter([96, 95, 94.9])
+    if device == 'cpu':
+        monkeypatch.setattr(resources.psutil, 'cpu_percent', lambda: next(samples))
+    else:
+        monkeypatch.setattr(resources, 'gpu_snapshot', lambda: {'usage': next(samples)})
+    reports = []
+    resources.wait_utilization(SimpleNamespace(wait=lambda seconds: False), lambda **kw: reports.append(kw), device)
+    assert len(reports) == 3
+    assert kind in reports[0]['stage']
+    assert reports[1]['memory_wait'] is True
+    assert reports[-1]['memory_wait'] is False
+
+
+def test_compute_utilization_wait_can_cancel(monkeypatch):
+    from server import resources
+    monkeypatch.setattr(resources.psutil, 'cpu_percent', lambda: 100)
+    cancel = threading.Event()
+    cancel.set()
+    with pytest.raises(Cancelled):
+        resources.wait_utilization(cancel, lambda **kw: None, 'cpu')
+
+
+def test_unavailable_gpu_utilization_does_not_block(monkeypatch):
+    from server import resources
+    monkeypatch.setattr(resources, 'gpu_snapshot', lambda: None)
+    reports = []
+    resources.wait_utilization(threading.Event(), lambda **kw: reports.append(kw), 'cuda')
+    assert not reports
+
+
 def test_checkpoint_preserves_recurrent_state_and_shared_references(tmp_path):
     tensor = torch.randn(1, 16, 8, 8)
     shared = {'tensor': tensor}
