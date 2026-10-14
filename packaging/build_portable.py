@@ -20,8 +20,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--cuda', action='store_true')
     args = parser.parse_args()
-    if args.cuda:
-        DEST = ROOT / 'releases' / 'VideoMatting-1.0.0-win64-GPU'
+    if not args.cuda:
+        DEST = ROOT / 'releases' / 'VideoMatting-1.0.0-win64-cpu'
     if DEST.exists():
         raise SystemExit('目标已存在，请使用新的发布目录，避免覆盖。')
     DEST.mkdir(parents=True)

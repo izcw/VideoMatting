@@ -6,11 +6,11 @@
 
 ### Windows 绿色版
 
-推荐完整 GPU＋CPU 包：`releases/VideoMatting-1.0.0-win64-GPU.zip`（约 2.57 GB）。包含 PyTorch 2.14.1+cu130 / torchvision 0.29.1+cu130 和全部模型，后端代码与源程序一致；兼容 NVIDIA GPU 时使用 CUDA，否则 CPU。适用于 RTX 4060 等支持的 GPU，目标机需兼容 CUDA 13.0 的 NVIDIA 驱动，无需安装 CUDA Toolkit；不支持 AMD/Intel GPU 加速。`检测运行设备.cmd` 可在目标电脑实际测试 CUDA 运算。构建命令追加 `--cuda`，需先在 `releases/cuda-wheels` 下载对应官方 Windows Python 3.13 wheel。已从压缩包在隔离路径验证 CUDA 版运行库导入、CPU 回退推理、编码、CMD 启停；本机无 NVIDIA 显卡，尚未完成 GPU 真机推理验收。显存容量仍限制可处理的视频尺寸，GPU 支持不代表 8 GB 显存可处理所有 4K 视频。
+推荐完整 GPU＋CPU 包：`releases/VideoMatting-1.0.0-win64.zip`（约 2.57 GB）。包含 PyTorch 2.14.1+cu130 / torchvision 0.29.1+cu130 和全部模型，后端代码与源程序一致；兼容 NVIDIA GPU 时使用 CUDA，否则 CPU。适用于 RTX 4060 等支持的 GPU，目标机需兼容 CUDA 13.0 的 NVIDIA 驱动，无需安装 CUDA Toolkit；不支持 AMD/Intel GPU 加速。`检测运行设备.cmd` 可在目标电脑实际测试 CUDA 运算。构建命令追加 `--cuda`，需先在 `releases/cuda-wheels` 下载对应官方 Windows Python 3.13 wheel。已从压缩包在隔离路径验证 CUDA 版运行库导入、CPU 回退推理、编码、CMD 启停；本机无 NVIDIA 显卡，尚未完成 GPU 真机推理验收。显存容量仍限制可处理的视频尺寸，GPU 支持不代表 8 GB 显存可处理所有 4K 视频。
 
-当前只发布上述 GPU＋CPU 合一包，名称中的 `GPU` 表示包含 CUDA 加速能力，并非只能使用 GPU。完整解压后双击「启动清影工坊.cmd」，无需安装 Python、Node.js 或下载模型。关闭启动窗口即停止服务。包含全部三个模型、不包含用户视频和历史任务；界面、功能与处理算法直接使用当前源程序，不另做精简版。请保留第三方许可，MatAnyone2 的 S-Lab 许可限制商业用途。
+当前只发布上述 GPU＋CPU 合一包，不添加 `-gpu` 后缀；如单独构建 CPU 包，其名称增加 `-cpu` 后缀。完整解压后双击「启动清影工坊.cmd」，无需安装 Python、Node.js 或下载模型。关闭启动窗口即停止服务。包含全部三个模型、不包含用户视频和历史任务；界面、功能与处理算法直接使用当前源程序，不另做精简版。请保留第三方许可，MatAnyone2 的 S-Lab 许可限制商业用途。
 
-构建：`.venv\Scripts\python.exe packaging/build_portable.py --cuda`（已有发布目录时拒绝覆盖）。验证：`.venv\Scripts\python.exe packaging/verify_portable.py releases/VideoMatting-1.0.0-win64-GPU.zip`。验证会在临时中文空格目录解压、清理开发环境变量，以独立端口测试导入、模型推理、FFmpeg、CMD 启动及窗口关闭后服务退出；不会停止 8765 上已有服务。已通过同一电脑的隔离目录验证，尚未在另一台干净 Windows 电脑验证。
+构建：`.venv\Scripts\python.exe packaging/build_portable.py --cuda`（已有发布目录时拒绝覆盖）。验证：`.venv\Scripts\python.exe packaging/verify_portable.py releases/VideoMatting-1.0.0-win64.zip`。验证会在临时中文空格目录解压、清理开发环境变量，以独立端口测试导入、模型推理、FFmpeg、CMD 启动及窗口关闭后服务退出；不会停止 8765 上已有服务。已通过同一电脑的隔离目录验证，尚未在另一台干净 Windows 电脑验证。
 
 ### 原画质性能优化（2026-10-14）
 
