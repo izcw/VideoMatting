@@ -273,16 +273,15 @@ class MattingEngine:
             mask_tensor = torch.from_numpy(matanyone_prompt(mask)).to(device)
             first_tensor = torch.from_numpy(np.array(first).copy()).permute(2, 0, 1).float().to(device) / 255
             progress(stage="首帧预热，稳定细节", progress=22)
-            # 原分辨率 attention 的临时内存随像素量增长，预留空间而不是降低画质。
-            reserve = max(2 * 2**30, metadata['width'] * metadata['height'] * 2200)
+            # 步骤前检查占用率，不要求固定 GB 预留，也不降低画质。
             if warmup_done < 0:
-                wait_compute_memory(cancel, progress, reserve, device)
+                wait_compute_memory(cancel, progress, 0, device)
                 processor.step(first_tensor, mask_tensor, objects=[1], delete_buffer=False)
                 checkpoint(folder, processor, 0, 0)
             for warmup in range(max(0, warmup_done), 10):
                 if cancel.is_set():
                     raise Cancelled()
-                wait_compute_memory(cancel, progress, reserve, device)
+                wait_compute_memory(cancel, progress, 0, device)
                 processor.step(first_tensor, first_frame_pred=True, delete_buffer=False)
                 checkpoint(folder, processor, warmup + 1, 0)
                 progress(stage=f"首帧预热（{warmup+1}/10）", progress=22+(warmup+1)*.2)
@@ -291,7 +290,7 @@ class MattingEngine:
                 frame_path = frames[index]
                 if cancel.is_set():
                     raise Cancelled()
-                wait_compute_memory(cancel, progress, reserve, device)
+                wait_compute_memory(cancel, progress, 0, device)
                 frame_started = time.monotonic()
                 image = np.asarray(Image.open(frame_path).convert("RGB")).copy()
                 tensor = torch.from_numpy(image).permute(2, 0, 1).float().to(device) / 255

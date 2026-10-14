@@ -72,6 +72,51 @@ def test_large_reserve_does_not_block_below_threshold(monkeypatch):
     assert reports == []
 
 
+def test_gpu_large_estimate_does_not_block_8gb_device(monkeypatch):
+    from server import resources
+    monkeypatch.setattr(resources.psutil, 'virtual_memory', lambda: SimpleNamespace(percent=50))
+    monkeypatch.setattr(torch.cuda, 'mem_get_info', lambda: (2 * 2**30, 8 * 2**30))
+    reports = []
+    resources.wait_compute_memory(threading.Event(), lambda **kw: reports.append(kw), 18.1 * 2**30, 'cuda')
+    assert not reports
+
+
+def test_gpu_waits_at_95_and_resumes_below_threshold(monkeypatch):
+    from server import resources
+    monkeypatch.setattr(resources.psutil, 'virtual_memory', lambda: SimpleNamespace(percent=50))
+    samples = iter([(500, 10000), (500, 10000), (501, 10000)])
+    monkeypatch.setattr(torch.cuda, 'mem_get_info', lambda: next(samples))
+    released = []
+    monkeypatch.setattr(torch.cuda, 'empty_cache', lambda: released.append(True))
+    reports = []
+    resources.wait_compute_memory(SimpleNamespace(wait=lambda seconds: False), lambda **kw: reports.append(kw), 0, 'cuda')
+    assert reports[0]['memory_wait'] is True and '95.0%' in reports[0]['stage']
+    assert reports[-1]['memory_wait'] is False
+    assert released == [True]
+
+
+def test_gpu_cache_release_avoids_wait(monkeypatch):
+    from server import resources
+    monkeypatch.setattr(resources.psutil, 'virtual_memory', lambda: SimpleNamespace(percent=50))
+    samples = iter([(400, 10000), (1000, 10000)])
+    monkeypatch.setattr(torch.cuda, 'mem_get_info', lambda: next(samples))
+    monkeypatch.setattr(torch.cuda, 'empty_cache', lambda: None)
+    reports = []
+    resources.wait_compute_memory(threading.Event(), lambda **kw: reports.append(kw), 0, 'cuda')
+    assert not reports
+
+
+def test_gpu_wait_is_cancellable(monkeypatch):
+    from server import resources
+    monkeypatch.setattr(resources.psutil, 'virtual_memory', lambda: SimpleNamespace(percent=50))
+    monkeypatch.setattr(torch.cuda, 'mem_get_info', lambda: (100, 10000))
+    monkeypatch.setattr(torch.cuda, 'empty_cache', lambda: None)
+    cancel = threading.Event()
+    cancel.set()
+    with pytest.raises(Cancelled):
+        resources.wait_compute_memory(cancel, lambda **kw: None, 0, 'cuda')
+
+
 @pytest.mark.skipif(os.environ.get('MATTING_MODEL_TEST') != '1', reason='按需运行真实权重恢复测试')
 def test_cached_warmup_is_bit_exact(tmp_path):
     from server.pipeline import MattingEngine

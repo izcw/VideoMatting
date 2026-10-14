@@ -39,7 +39,8 @@ def wait_memory(cancel, progress, required=2 * 2**30):
 
 
 def wait_compute_memory(cancel, progress, required, device):
-    wait_memory(cancel, progress, min(required, 2 * 2**30) if device == 'cuda' else required)
+    # 保留 required 参数以兼容调用；内存和显存都按占用率保护，不按估算分配量等待。
+    wait_memory(cancel, progress)
     if device != 'cuda':
         return
     import torch
@@ -47,12 +48,17 @@ def wait_compute_memory(cancel, progress, required, device):
     waiting = False
     while True:
         free, total = torch.cuda.mem_get_info()
-        reusable = torch.cuda.memory_reserved() - torch.cuda.memory_allocated()
-        if free + reusable > required:
+        usage = (total - free) * 100 / total
+        if usage >= MEMORY_LIMIT:
+            # 释放本进程闲置缓存再判断，避免被自身可回收缓存一直阻塞。
+            torch.cuda.empty_cache()
+            free, total = torch.cuda.mem_get_info()
+            usage = (total - free) * 100 / total
+        if usage < MEMORY_LIMIT:
             if waiting:
                 progress(memory_wait=False, stage='显存已释放，继续处理')
             return
         waiting = True
-        progress(memory_wait=True, stage=f'显存保护：等待 {required / 2**30:.1f} GB 可用显存；可关闭其他 GPU 程序')
+        progress(memory_wait=True, stage=f'显存保护：当前使用 {usage:.1f}%，降至 {MEMORY_LIMIT}% 以下后自动继续；可关闭其他 GPU 程序')
         if cancel.wait(2):
             raise Cancelled()
