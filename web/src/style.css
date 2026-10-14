@@ -10,7 +10,8 @@ body {
 }
 button,
 a,
-input {
+input,
+select {
   font: inherit;
 }
 button,
@@ -36,6 +37,8 @@ input:focus-visible {
   outline: 3px solid #8685e4;
   outline-offset: 3px;
 }
+select:focus-visible { outline:3px solid #8685e4; outline-offset:3px; }
+::selection { background:#e9e4ff; color:#382b72; }
 main {
   max-width: 1560px;
   padding: 32px 42px;
@@ -213,6 +216,7 @@ h1 {
 }
 .workspace-head strong {
   font-size: 14px;
+  overflow-wrap:anywhere;
 }
 .badge {
   background: #eff0f4;
@@ -262,6 +266,8 @@ h1 {
   font-size: 12px;
   padding-bottom: 12px;
   color: #636676;
+  gap:10px;
+  flex-wrap:wrap;
 }
 .player-label small {
   font-size: 11px;
@@ -292,14 +298,14 @@ h1 {
   display: block;
 }
 .checker {
-  background-color: #fafafa;
+  background-color: #27271f;
   background-image: conic-gradient(
-    #e1e2e5 25%,
+    #36362e 25%,
     transparent 0 50%,
-    #e1e2e5 0 75%,
+    #36362e 0 75%,
     transparent 0
   );
-  background-size: 24px 24px;
+  background-size: 40px 40px;
 }
 .black {
   background: #17191d;
@@ -528,3 +534,80 @@ h1 {
 .processing-time { color:#82778f; font-size:13px; white-space:nowrap; }
 .history-info { display:flex; flex-direction:column; gap:7px; min-width:0; }
 .history-info em { font-size:12px; color:#938a9f; font-style:normal; font-weight:normal; }
+
+/* 细节统一：沿用当前布局，强化层次、可读性与操作反馈。 */
+button { border-color:#dfdbea; }
+button:disabled { box-shadow:none; }
+.brand img { filter:drop-shadow(0 3px 6px #625ad615); }
+.device i { box-shadow:0 0 0 4px #625ad60c; }
+.subtitle { color:#7d748e; }
+.workspace-head { background:linear-gradient(180deg,#fcfbff,#fff); }
+.workspace-head > div { display:flex; align-items:center; gap:12px; min-width:0; }
+.workspace-head .badge { margin-left:0; flex:none; white-space:nowrap; }
+.badge.processing, .badge.queued { background:#f0ecff; color:#625ad6; }
+.preview-note { line-height:1.75; }
+.export-modes button { border-radius:8px; }
+.export-modes button[aria-pressed="true"]:not(:disabled):hover { background:var(--purple-dark); border-color:var(--purple-dark); color:#fff; }
+.backgrounds { border-color:#e1dceb; box-shadow:0 1px 3px #45327605; }
+.backgrounds button[aria-pressed="true"]:not(:disabled):hover { background:#e5dfff; color:#514abe; }
+.backgrounds input[type="color"] { border-radius:5px; }
+.backgrounds input[type="color"]::-webkit-color-swatch-wrapper { padding:3px; }
+.backgrounds input[type="color"]::-webkit-color-swatch { border:1px solid #0000000d; border-radius:4px; }
+.player-label > span { line-height:1.6; }
+.player-label small { color:#8a8197; }
+.remove-material { border-color:#e7e2ef; border-radius:7px; }
+.empty { border:1px solid #ffffffb3; box-shadow:0 6px 24px #39295106; }
+.initial-preview { width:250px; height:250px; box-sizing:border-box; display:flex; align-items:center; justify-content:center; padding:0; border-radius:18px; }
+.preview-number { font-size:112px; line-height:1; font-weight:600; color:#e0e1e7; user-select:none; }
+.initial-preview .preview-number { transform:translateY(-28px); }
+.initial-result-copy { position:absolute; top:calc(50% + 38px); left:0; width:100%; text-align:center; }
+.initial-result-copy strong { display:flex; height:46px; align-items:center; justify-content:center; color:#81788f; font-size:14px; font-weight:500; }
+.initial-result-copy small { display:block; margin-top:8px; color:#938b9f; font-size:10px; white-space:nowrap; }
+.upload-formats { position:absolute; top:calc(50% + 92px); left:50%; transform:translateX(-50%); white-space:nowrap; color:#938b9f; font-size:10px; }
+.app-version { margin-left:14px; font-variant-numeric:tabular-nums; }
+.upload-overlay:not(.has-video) { top:calc(50% + 38px); }
+.empty-icon { color:#8075bb; }
+.viewport-tools button { border-color:#ffffffb3; box-shadow:0 2px 8px #30234012; }
+.transport { gap:12px; }
+.transport > button:first-child { color:#574dc0; border-color:#ded8f5; background:#f6f3ff; }
+.transport .loop-control { color:#72687f; gap:6px; }
+.transport .loop-control input { width:14px; height:14px; margin:0; }
+.speed-control select, .export select { color:#60556f; background:#fff; border:1px solid #e1dbea; border-radius:7px; padding:6px 9px; font-size:12px; }
+.export small { line-height:1.8; }
+.export select { margin:4px 0 0 6px; max-width:100%; }
+.download-actions .primary { box-shadow:0 3px 10px #625ad61a; }
+.download-actions .primary:disabled { box-shadow:none; }
+.system-monitor { box-shadow:0 3px 16px #45327604; }
+.monitor-metric + .monitor-metric { border-left:1px solid #ebe6f5; padding-left:22px; }
+.usage-ring { box-shadow:0 2px 9px #625ad60a; }
+.metric-history span { white-space:nowrap; }
+.history-row { gap:10px; margin:10px 0; }
+.history-row button { margin-top:0; align-items:center; padding-top:15px; padding-bottom:15px; }
+.history-info > span { font-weight:500; overflow-wrap:anywhere; line-height:1.6; }
+.history-info em { line-height:1.6; font-variant-numeric:tabular-nums; }
+.history-row small { line-height:1.7; }
+.history-row .delete-task { border-color:transparent; background:#faf8fc; padding-left:14px; padding-right:14px; }
+.history-row .delete-task:not(:disabled):hover { border-color:#ecd8e1; background:#fff4f7; color:#a04f6c; }
+.workflow-steps > div { padding:22px; box-shadow:0 2px 8px #45327603; }
+.workflow p { color:#81788f; }
+.footnote { color:#8a8195; line-height:1.9; }
+@media(min-width:851px) and (max-width:1200px) { .preview-controls { flex-wrap:wrap; } }
+@media(max-width:700px) {
+  .monitor-metric + .monitor-metric { border-left:0; border-top:1px solid #ebe6f5; padding-left:0; padding-top:18px; }
+  .history-row > button:first-child { align-items:flex-start; flex-direction:column; gap:8px; }
+  .history-row small { max-width:100%; text-align:left; padding-left:0; }
+  .export .download-actions { flex-basis:100%; justify-content:space-between; }
+}
+@media(max-width:480px) {
+  main { padding:18px 12px; }
+  .brand em { display:block; margin:3px 0 0; }
+  .topbar { gap:12px; align-items:flex-start; }
+  .workspace-head { padding:20px 16px; }
+  .preview-controls { margin-left:16px; margin-right:16px; }
+  .preview-note { margin-left:16px; margin-right:16px; }
+  .players { padding:0 16px; }
+  .transport, .export { padding:16px; }
+  .workflow-steps { gap:12px; }
+  .workflow-steps > div { padding:16px; }
+}
+@media(prefers-reduced-motion:reduce) { button, a, .phase-progress > div { transition:none; } }

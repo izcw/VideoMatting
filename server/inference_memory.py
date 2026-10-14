@@ -14,7 +14,9 @@ def bounded_similarity(original, guard):
         block = min(256, queries)
         # 最终矩阵仍需完整保留，但临时矩阵仅保留一个查询块。
         guard(batch * keys * (queries + 4 * block) * qk.element_size() + 512 * 2**20)
-        output = torch.empty((batch, keys, queries), dtype=qk.dtype, device=qk.device)
+        # top-k 在记忆键维度上筛选：让该维度连续，避免跨数万列读取。
+        # 只改变存储布局，不改变矩阵形状、数值、记忆数量或精度。
+        output = torch.empty((batch, queries, keys), dtype=qk.dtype, device=qk.device).transpose(1, 2)
         for start in range(0, queries, block):
             end = start + block
             output[:, :, start:end] = original(mk, ms, qk[:, :, start:end],

@@ -31,14 +31,16 @@ def test_resource_statistics_are_per_task_persisted_and_processing_only(client):
     assert module.jobs[first]['resource_stats']['cpu']['average'] == 40
 
 
-def test_single_delete_preserves_media_and_blocks_active(client):
+def test_single_delete_removes_media_and_blocks_active(client):
     job = client.post('/api/jobs', files={'file': ('test.mp4', b'original')}).json()
     path = f"/api/jobs/{job['id']}"
     assert client.delete(path).status_code == 409
     module.save(job['id'], status='failed')
-    assert client.delete(path).json()['files_deleted'] is False
+    assert client.delete(path).json()['files_deleted'] is True
     assert client.get('/api/jobs').json() == []
-    assert (module.DATA / job['id'] / 'source').read_bytes() == b'original'
+    assert not (module.DATA / job['id']).exists()
+    assert client.get(path).status_code == 404
+    module.execute(job['id'])  # 已取消的排队任务被删除后，延迟执行不会报错。
 
 
 def test_progress_preview_is_available_before_completion(client):
@@ -48,6 +50,39 @@ def test_progress_preview_is_available_before_completion(client):
     response = client.get(f"/api/jobs/{job['id']}/preview-frame")
     assert response.status_code == 200 and response.headers['content-type'] == 'image/png'
     assert response.headers['cache-control'] == 'no-store'
+
+
+def test_delete_failure_keeps_task_for_retry(client, monkeypatch):
+    job = client.post('/api/jobs', files={'file': ('test.mp4', b'original')}).json()
+    module.save(job['id'], status='failed')
+    monkeypatch.setattr(module.shutil, 'rmtree', Mock(side_effect=PermissionError('locked')))
+    assert client.delete(f"/api/jobs/{job['id']}").status_code == 409
+    assert job['id'] in module.jobs
+    assert (module.DATA / job['id'] / 'source').exists()
+
+
+def test_clear_also_removes_legacy_hidden_files(client):
+    job = client.post('/api/jobs', files={'file': ('old.mp4', b'original')}).json()
+    module.save(job['id'], status='failed', history_hidden=True)
+    assert client.post('/api/history/clear').json()['cleared'] == 1
+    assert not (module.DATA / job['id']).exists()
+
+
+def test_failed_legacy_elapsed_uses_last_update_not_current_time(client):
+    job = client.post('/api/jobs', files={'file': ('old.mp4', b'original')}).json()
+    module.jobs[job['id']].update(status='interrupted', started_at=100, updated_at=142)
+    assert client.get(f"/api/jobs/{job['id']}").json()['elapsed_seconds'] == 42
+
+
+def test_restart_retains_last_processing_elapsed(client):
+    import asyncio
+    job = client.post('/api/jobs', files={'file': ('old.mp4', b'original')}).json()
+    module.save(job['id'], status='processing', started_at=module.time.time() - 25)
+    async def restart():
+        async with module.lifespan(module.app):
+            assert module.jobs[job['id']]['status'] == 'interrupted'
+            assert 25 <= module.jobs[job['id']]['elapsed_seconds'] < 27
+    asyncio.run(restart())
 
 
 @pytest.fixture
@@ -125,26 +160,26 @@ def test_failure_surfaces_error(client, monkeypatch):
     monkeypatch.setattr(module.engine, "process", failure)
     module.execute(job["id"])
     assert client.get(f"/api/jobs/{job['id']}").json()["error"] == "未检测到人物"
+    assert client.get(f"/api/jobs/{job['id']}").json()['elapsed_seconds'] >= 0
 
 
 def test_server_responds_with_local_page(client):
     assert client.get("/").status_code == 200
     assert client.get("/api/health").json()["service"] == "py-VideoMatting"
+    assert client.get("/api/health").json()['version'] == '1.0.0'
 
 
-def test_clear_history_preserves_files_and_job_access(client):
+def test_clear_history_removes_files_and_job_access(client):
     import json
     job = client.post('/api/jobs', files={'file': ('keep.mp4', b'original')}).json()
     folder = module.DATA / job['id']
     (folder / 'result.webm').write_bytes(b'result')
     module.save(job['id'], status='done')
     response = client.post('/api/history/clear')
-    assert response.status_code == 200 and response.json() == {'cleared': 1, 'files_deleted': False}
+    assert response.status_code == 200 and response.json() == {'cleared': 1, 'files_deleted': True}
     assert client.get('/api/jobs').json() == []
-    assert client.get(f"/api/jobs/{job['id']}").status_code == 200
-    assert client.get(f"/api/jobs/{job['id']}/download").content == b'result'
-    assert (folder / 'source').read_bytes() == b'original'
-    assert json.loads((folder / 'job.json').read_text(encoding='utf-8'))['history_hidden']
+    assert client.get(f"/api/jobs/{job['id']}").status_code == 404
+    assert not folder.exists()
     assert client.post('/api/history/clear').json()['cleared'] == 0
     new = client.post('/api/jobs', files={'file': ('new.mp4', b'new')}).json()
     assert [j['id'] for j in client.get('/api/jobs').json()] == [new['id']]

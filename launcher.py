@@ -10,7 +10,8 @@ import webbrowser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-URL = "http://127.0.0.1:8765"
+PORT = int(os.environ.get("VIDEOMATTING_PORT", "8765"))
+URL = f"http://127.0.0.1:{PORT}"
 PID_FILE = ROOT / "data" / "server.pid"
 
 
@@ -59,7 +60,7 @@ def health():
     with urllib.request.urlopen(URL + "/api/health", timeout=2) as response:
         info = json.load(response)
     if info.get("service") != "py-VideoMatting":
-        raise RuntimeError("8765 端口已被其他程序占用。")
+        raise RuntimeError(f"{PORT} 端口已被其他程序占用。")
     return info
 
 
@@ -97,7 +98,7 @@ def start(no_browser=False, lifetime=None):
             if os.name == "nt":
                 flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
             server = subprocess.Popen([sys.executable, "-m", "uvicorn", "server.app:app",
-                                       "--host", "127.0.0.1", "--port", "8765"],
+                                       "--host", "127.0.0.1", "--port", str(PORT)],
                                       cwd=ROOT, stdin=subprocess.DEVNULL, stdout=output, stderr=errors,
                                       creationflags=flags, close_fds=True)
             lifetime.assign(server)

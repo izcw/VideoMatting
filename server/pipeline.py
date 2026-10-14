@@ -30,7 +30,10 @@ def checkpoint(folder, processor, warmup, completed):
     import torch
     state = {key: value for key, value in vars(processor).items()
              if key not in {'network', 'image_feature_store'}}
-    payload = dict(version=1, state=state, features=processor.image_feature_store._store,
+    # 预热时复用的静态图像特征可由原帧精确重算，不必每次写入数 GB 检查点。
+    # 时序状态仍完整保存；普通帧检查点保持原有语义。
+    features = {} if completed == 0 else processor.image_feature_store._store
+    payload = dict(version=1, state=state, features=features,
                    warmup=warmup, completed=completed)
     temporary = folder / 'checkpoint.tmp'
     torch.save(payload, temporary)
@@ -274,13 +277,13 @@ class MattingEngine:
             reserve = max(2 * 2**30, metadata['width'] * metadata['height'] * 2200)
             if warmup_done < 0:
                 wait_compute_memory(cancel, progress, reserve, device)
-                processor.step(first_tensor, mask_tensor, objects=[1])
+                processor.step(first_tensor, mask_tensor, objects=[1], delete_buffer=False)
                 checkpoint(folder, processor, 0, 0)
             for warmup in range(max(0, warmup_done), 10):
                 if cancel.is_set():
                     raise Cancelled()
                 wait_compute_memory(cancel, progress, reserve, device)
-                processor.step(first_tensor, first_frame_pred=True)
+                processor.step(first_tensor, first_frame_pred=True, delete_buffer=False)
                 checkpoint(folder, processor, warmup + 1, 0)
                 progress(stage=f"首帧预热（{warmup+1}/10）", progress=22+(warmup+1)*.2)
             frame_times = []

@@ -37,6 +37,11 @@ def test_bounded_similarity_matches_original(selection):
     result = bounded_similarity(get_similarity, guarded.append)(mk, ms, qk, qe)
     torch.testing.assert_close(result, get_similarity(mk, ms, qk, qe), rtol=1e-5, atol=1e-5)
     assert guarded and guarded[0] > result.numel() * result.element_size()
+    assert result.stride(1) == 1
+    from matanyone2.model.utils.memory_utils import do_softmax
+    expected = get_similarity(mk, ms, qk, qe)
+    affinity = do_softmax(result, top_k=30, inplace=True)
+    torch.testing.assert_close(affinity, do_softmax(expected, top_k=30, inplace=True), rtol=1e-5, atol=1e-5)
 
 
 def test_memory_backpressure_waits_and_can_cancel(monkeypatch):
@@ -65,6 +70,38 @@ def test_large_reserve_does_not_block_below_threshold(monkeypatch):
     reports = []
     resources.wait_memory(threading.Event(), lambda **kw: reports.append(kw), required=20 * 2**30)
     assert reports == []
+
+
+@pytest.mark.skipif(os.environ.get('MATTING_MODEL_TEST') != '1', reason='按需运行真实权重恢复测试')
+def test_cached_warmup_is_bit_exact(tmp_path):
+    from server.pipeline import MattingEngine
+    engine = MattingEngine()
+    device = engine.load(lambda **kw: None, selectors=False)
+    from matanyone2.inference.inference_core import InferenceCore
+    torch.manual_seed(17)
+    image = torch.rand(3, 128, 128, device=device)
+    mask = torch.zeros(128, 128, device=device)
+    mask[20:108, 30:98] = 255
+    def run(cached):
+        processor = InferenceCore(engine.model, cfg=engine.config)
+        outputs = []
+        processor.step(image, mask, objects=[1], delete_buffer=not cached)
+        for index in range(10):
+            outputs.append(processor.step(image, first_frame_pred=True, delete_buffer=not cached).clone())
+            if cached and index == 4:
+                checkpoint(tmp_path, processor, 5, 0)
+                processor.image_feature_store.delete(0)
+                processor = InferenceCore(engine.model, cfg=engine.config)
+                assert restore_checkpoint(tmp_path, processor, device) == (5, 0)
+                assert len(processor.image_feature_store) == 0
+        outputs.append(processor.step(image, first_frame_pred=True).clone())
+        outputs.append(processor.step(image * .97).clone())
+        assert len(processor.image_feature_store) == 0
+        return outputs
+    with torch.inference_mode():
+        expected, actual = run(False), run(True)
+    for a, b in zip(expected, actual):
+        torch.testing.assert_close(a, b, rtol=0, atol=0)
 
 
 @pytest.mark.skipif(os.environ.get('MATTING_MODEL_TEST') != '1', reason='按需运行真实权重恢复测试')

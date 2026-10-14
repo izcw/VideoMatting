@@ -6,6 +6,7 @@ import threading
 import time
 import uuid
 import math
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -29,6 +30,30 @@ lock = threading.RLock()
 executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="matting")
 export_lock = threading.Lock()
 HISTORY_LIMIT = 10
+VERSION = "1.0.0"
+
+
+def stored_elapsed(job: dict) -> float:
+    if job.get('elapsed_seconds') is not None:
+        return job['elapsed_seconds']
+    start = job.get('started_at') or job.get('created_at', 0)
+    return round(max(0, job.get('updated_at', start) - start), 1)
+
+
+def remove_job_files(job_id: str):
+    # 验证绝对路径，仅删除数据目录内的 UUID 子目录。
+    if str(uuid.UUID(job_id)) != job_id:
+        raise HTTPException(400, '无效任务路径')
+    folder = DATA / job_id
+    if folder.resolve().parent != DATA.resolve() or folder.is_symlink() or folder.is_junction():
+        raise HTTPException(400, '任务路径异常，未删除文件')
+    try:
+        if folder.exists():
+            shutil.rmtree(folder)
+    except OSError as error:
+        raise HTTPException(409, '文件正在使用或无法删除，请停止预览或下载后重试。') from error
+    jobs.pop(job_id, None)
+    cancel_events.pop(job_id, None)
 
 
 def prune_history():
@@ -40,7 +65,7 @@ def prune_history():
 
 
 def public_job(job: dict) -> dict:
-    return {**job, 'can_resume': not job.get('resume_blocked') and job['status'] in {'interrupted', 'failed', 'cancelled'}
+    return {**job, 'elapsed_seconds': stored_elapsed(job), 'can_resume': not job.get('resume_blocked') and job['status'] in {'interrupted', 'failed', 'cancelled'}
             and (DATA / job['id'] / 'source').is_file()}
 
 class ExportOptions(BaseModel):
@@ -52,6 +77,8 @@ class ExportOptions(BaseModel):
 def save(job_id: str, **changes):
     with lock:
         jobs[job_id].update(changes)
+        if jobs[job_id]['status'] == 'processing' and jobs[job_id].get('started_at'):
+            jobs[job_id]['elapsed_seconds'] = round(time.time() - jobs[job_id]['started_at'], 1)
         jobs[job_id]["updated_at"] = time.time()
         record = DATA / job_id / "job.json"
         temporary = record.with_suffix(".tmp")
@@ -91,8 +118,8 @@ def monitor_task(job_id: str, stop: threading.Event):
 
 
 def execute(job_id: str):
-    cancel = cancel_events[job_id]
-    if cancel.is_set():
+    cancel = cancel_events.get(job_id)
+    if cancel is None or cancel.is_set():
         return
     started = time.time()
     save(job_id, status="processing", started_at=started, stage="开始处理")
@@ -132,7 +159,7 @@ async def lifespan(_app):
             if job["status"] in {"uploading", "queued", "processing"}:
                 if job['status'] == 'uploading':
                     job['resume_blocked'] = True  # 上传未完成，原片可能不完整。
-                job.update(status="interrupted", stage="任务已中断，点击可恢复处理", error="服务已停止，可复用原视频重新处理。")
+                job.update(status="interrupted", elapsed_seconds=stored_elapsed(job), stage="任务已中断，点击可恢复处理", error="服务已停止，可复用原视频重新处理。")
                 file.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
             jobs[job["id"]] = job
         except (ValueError, KeyError):
@@ -180,7 +207,7 @@ def health():
     ready = MODEL_PATH.is_file() and (ROOT / "models/sam2.1_hiera_tiny.pt").is_file() and (ROOT / "vendor/SAM2/sam2").is_dir()
     return {"service": "py-VideoMatting", "ready": ready,
             "device": "CUDA GPU" if torch.cuda.is_available() else "CPU（处理较慢）",
-            "model": "MatAnyone 2", "version": "0.1.0"}
+            "model": "MatAnyone 2", "version": VERSION}
 
 
 @app.get("/api/jobs")
@@ -197,12 +224,12 @@ def system_status():
 
 @app.delete('/api/jobs/{job_id}')
 def delete_job(job_id: str):
-    with lock:
+    with export_lock, lock:
         job = lookup(job_id)
         if job['status'] in {'queued', 'processing', 'uploading'}:
             raise HTTPException(409, '请先取消处理，再删除记录。')
-        save(job_id, history_hidden=True)
-    return {'deleted': True, 'files_deleted': False}
+        remove_job_files(job_id)
+    return {'deleted': True, 'files_deleted': True}
 
 
 @app.get('/api/jobs/{job_id}/preview-frame')
@@ -216,14 +243,14 @@ def preview_frame(job_id: str):
 
 @app.post("/api/history/clear")
 def clear_history():
-    # 只隐藏历史入口，保留任务元数据及全部媒体；当前预览和下载仍可使用。
-    with lock:
+    # 一并清理旧版本隐藏的历史任务，不触碰用户上传前的原始文件。
+    with export_lock, lock:
         if any(j["status"] in {"uploading", "queued", "processing"} for j in jobs.values()):
             raise HTTPException(409, "还有任务正在上传、排队或处理，请完成或取消后再清空。")
-        selected = [job_id for job_id, j in jobs.items() if not j.get("history_hidden")]
+        selected = list(jobs)
         for job_id in selected:
-            save(job_id, history_hidden=True)
-    return {"cleared": len(selected), "files_deleted": False}
+            remove_job_files(job_id)
+    return {"cleared": len(selected), "files_deleted": True}
 
 
 @app.post("/api/jobs", status_code=202)

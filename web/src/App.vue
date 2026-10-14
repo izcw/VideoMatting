@@ -42,13 +42,14 @@ const clearingHistory = ref(false);
 const historyMessage = ref('');
 async function clearHistory() {
   if (busy.value || clearingHistory.value || !history.value.length) return;
-  if (!window.confirm('清空最近的处理任务？只清除历史列表记录，不删除原视频、结果或遮罩文件。当前预览仍会保留。')) return;
+  if (!window.confirm('清空全部历史任务及本地处理文件（包括旧版隐藏的任务）？将永久删除上传副本、结果、遮罩与缓存，无法恢复。不会删除上传前的原始视频。')) return;
   clearingHistory.value = true;
   historyMessage.value = '';
   try {
     const value = await api('/api/history/clear', { method: 'POST' });
+    clearMaterial();
     await refreshHistory();
-    historyMessage.value = `已清空 ${value.cleared} 条记录，原视频和处理结果仍保留在本机。`;
+    historyMessage.value = `已清空 ${value.cleared} 个任务及其本地处理文件，无法恢复；上传前的原始视频未改动。`;
   } catch (e) { error.value = String(e); }
   finally { clearingHistory.value = false; }
 }
@@ -89,10 +90,12 @@ function resourceHistory(key: string, field: 'max' | 'average') {
 let monitorTimer: ReturnType<typeof setInterval> | undefined;
 async function monitor() { try { system.value = await api('/api/system'); } catch {} }
 async function deleteHistory(item: Job) {
+  if (!window.confirm(`删除“${item.name}”及其本地处理文件？此操作无法恢复，不影响上传前的原始视频。`)) return;
   try {
     await api(`/api/jobs/${item.id}`, { method: 'DELETE' });
+    if (job.value?.id === item.id) clearMaterial();
     await refreshHistory();
-    historyMessage.value = '已删除这条记录，原片与处理文件仍保留在本机。';
+    historyMessage.value = '已永久删除任务及本地处理文件，上传前的原始视频未改动。';
   } catch (e) { error.value = String(e); }
 }
 const fullscreenElement = ref<Element | null>(null);
@@ -141,13 +144,13 @@ const remaining = computed(() => {
   if (job.value?.status !== 'processing') return '';
   if (job.value.memory_wait) return '内存保护等待中，释放内存后自动继续；等待时间不计入估算';
   if (job.value.progress >= 88) return '抠像完成，正在合成高清文件；请查看合成进度';
-  if (job.value.eta_seconds != null) return `预计抠像剩余：约 ${Math.ceil(job.value.eta_seconds)} 秒（之后还需合成）`;
+  if (job.value.eta_seconds != null) return `预计抠像剩余：约 ${formatDuration(Math.ceil(job.value.eta_seconds))}（之后还需合成）`;
   const count = job.value.completed_frames ?? 0;
   const total = job.value.total_frames ?? job.value.metadata?.frames ?? 0;
-  if (count < 3 || !job.value.started_at || !total) return `正在加载或预热，已用 ${Math.max(0, Math.floor(now.value / 1000 - (job.value.started_at ?? now.value / 1000)))} 秒；首个处理帧完成后估算`;
+  if (count < 3 || !job.value.started_at || !total) return `正在加载或预热，已用 ${formatDuration(now.value / 1000 - (job.value.started_at ?? now.value / 1000))}；首个处理帧完成后估算`;
   const elapsed = now.value / 1000 - job.value.started_at;
   const seconds = Math.max(1, elapsed / count * (total - count) + elapsed * .08);
-  return `预计剩余：约 ${seconds < 60 ? Math.ceil(seconds) + ' 秒' : Math.ceil(seconds / 60) + ' 分钟'}（动态估算）`;
+  return `预计剩余：约 ${formatDuration(Math.ceil(seconds))}（动态估算）`;
 });
 async function prepareExport() {
   const version = ++exportVersion;
@@ -236,14 +239,19 @@ const localBytes = ref(0);
 const resultBytes = ref<number>();
 let sizeVersion = 0;
 const sizeMB = (bytes?: number) => bytes == null ? '' : `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+function formatDuration(value: number) {
+  const seconds = Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor(seconds % 3600 / 60);
+  const pad = (number: number) => String(number).padStart(2, '0');
+  return `${hours ? `${pad(hours)}小时` : ''}${pad(minutes)}分${pad(seconds % 60)}秒`;
+}
 function elapsedText(item?: Job) {
   if (!item) return '—';
   const value = item.status === 'processing' && item.started_at
     ? now.value / 1000 - item.started_at : item.elapsed_seconds;
   if (value == null) return ['queued', 'uploading'].includes(item.status) ? '尚未开始' : '—';
-  const seconds = Math.max(0, Math.round(value));
-  const hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds % 3600 / 60);
-  return `${hours ? `${hours} 小时 ` : ''}${minutes ? `${minutes} 分 ` : ''}${seconds % 60} 秒`;
+  return formatDuration(value);
 }
 const createdText = (value?: number) => value == null ? '—' : new Date(value * 1000).toLocaleString('zh-CN', { hour12: false });
 watch(exportDownload, async url => {
@@ -448,6 +456,16 @@ watch([originalSrc, resultSrc], async () => {
 watch([exportMode, customColor, keepAudio, () => job.value?.id, () => job.value?.status], prepareExport);
 watch(exportMode, mode => { background.value = mode === 'custom' ? 'custom' : mode === 'matte' ? 'black' : 'checker'; });
 watch(playbackRate, applyPlaybackRate);
+function confirmLeaveWhileProcessing(event: BeforeUnloadEvent) {
+  if (!busy.value) return;
+  // 浏览器使用内置确认文案，不允许网页自定义刷新提示内容。
+  event.preventDefault();
+  event.returnValue = '';
+}
+watch(busy, active => {
+  if (active) window.addEventListener('beforeunload', confirmLeaveWhileProcessing);
+  else window.removeEventListener('beforeunload', confirmLeaveWhileProcessing);
+}, { flush: 'sync' });
 onMounted(async () => {
   monitor();
   monitorTimer = setInterval(monitor, 3000);
@@ -469,6 +487,7 @@ onMounted(async () => {
   }
 });
 onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', confirmLeaveWhileProcessing);
   clearInterval(monitorTimer);
   viewportObserver?.disconnect();
   window.removeEventListener('pointerup', endScrub);
@@ -572,12 +591,11 @@ onBeforeUnmount(() => {
               @ended="!looping && pause()"
               @error="originalUnsupported = true"
             ></video>
-            <div v-else class="empty">
-              <span class="empty-icon">↥</span>
-              <h3>从原视频开始</h3>
-              <p>点击上传，或将视频拖到上传区域</p>
+              <div v-else class="empty initial-preview" aria-label="原视频上传区域">
+                <span class="preview-number" aria-hidden="true">1</span>
             </div>
             <button v-if="!fullscreenElement" class="primary upload-overlay" :class="{ 'has-video': originalSrc }" :disabled="busy" @click.stop="chooseFile">{{ uploading ? "正在上传…" : busy ? "视频处理中…" : originalSrc ? "＋ 更换原视频" : "＋ 上传原视频" }}</button>
+            <small v-if="!originalSrc && !fullscreenElement" class="upload-formats">支持 MP4 · MOV · WebM · MKV</small>
             <div v-if="originalSrc && fullscreenElement !== comparison" class="viewport-tools"><button v-if="fullscreenElement === originalViewport" class="playback-icon" :aria-label="playing ? '暂停' : '播放'" :title="playing ? '暂停' : '播放'" @click.stop="togglePlay"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path v-if="playing" d="M6 4h4v16H6zm8 0h4v16h-4z"/><path v-else d="M7 4v16l13-8z"/></svg></button><label v-if="fullscreenElement === originalViewport" class="speed-control" @click.stop><select v-model.number="playbackRate" aria-label="原视频全屏播放速度"><option v-for="speed in speedOptions" :key="speed" :value="speed">{{ speed }}×</option></select></label><button class="fullscreen-icon" :aria-label="fullscreenElement === originalViewport ? '关闭全屏' : '原视频全屏'" :title="fullscreenElement === originalViewport ? '关闭' : '全屏'" @click.stop="fullscreen(originalViewport)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path v-if="fullscreenElement === originalViewport" d="M6 6l12 12M18 6L6 18"/><path v-else d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></button></div>
             <p
               v-if="originalUnsupported && !job?.original_ready"
@@ -605,7 +623,11 @@ onBeforeUnmount(() => {
               @click.stop="togglePlay"
             ></video>
             <div v-else-if="job?.preview_frame" class="live-preview"><img :src="`/api/jobs/${job.id}/preview-frame?v=${job.preview_frame}`" alt="最近已处理帧的透明预览" /><small>处理预览 · 第 {{ job.preview_frame }} 帧（预览缩略图，导出保持原分辨率）</small></div>
-            <div v-else class="empty">
+              <div v-else-if="!job && !busy" class="empty initial-preview" aria-label="等待处理结果">
+                <span class="preview-number" aria-hidden="true">2</span>
+                <div class="initial-result-copy"><strong>预览透明效果</strong><small>自动移除背景，处理完成即可下载</small></div>
+              </div>
+              <div v-else class="empty">
               <span class="empty-icon">◌</span>
               <h3>{{ busy ? "正在分离人物与背景" : "等待处理结果" }}</h3>
               <p>
@@ -659,8 +681,8 @@ onBeforeUnmount(() => {
           >
         </div>
         <progress :value="percent" max="100" aria-label="处理进度"></progress
-        ><small v-if="job.elapsed_seconds"
-          >用时 {{ job.elapsed_seconds }} 秒</small
+        ><small v-if="job.elapsed_seconds != null"
+          >用时 {{ elapsedText(job) }}</small
         >
         <small v-if="remaining" class="remaining">{{ remaining }}</small>
       </div>
@@ -682,7 +704,7 @@ onBeforeUnmount(() => {
         ><button v-else class="primary" disabled>{{ exportPending ? '正在准备导出…' : `↓ 下载${exportLabel}` }}</button></div>
       </footer>
     </section>
-    <section v-if="system" class="system-monitor" aria-label="系统资源监控">
+    <section v-if="system && job" class="system-monitor" aria-label="系统资源监控">
       <h2 class="section-title">资源监控</h2>
       <small>当前使用 {{ system.device }} · 本地处理</small>
       <div class="monitor-metrics">
@@ -722,6 +744,6 @@ onBeforeUnmount(() => {
       精细抠像不等于画面超分。请检查发丝、手指、衣袖和裙摆；复杂遮挡、道具和多人素材可能需要进一步修正。CPU
       模式会明显慢于 NVIDIA GPU。
     </p>
-    <footer class="copyright">©2026 izcw</footer>
+    <footer class="copyright">©2026 izcw <span class="app-version">VideoMatting v1.0.0</span></footer>
   </main>
 </template>
