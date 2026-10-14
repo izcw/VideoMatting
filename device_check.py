@@ -96,11 +96,21 @@ def diagnose():
         print('当前使用 CPU 处理，建议使用具备 NVIDIA 显卡的设备。')
         if torch.version.cuda:
             print('如有 RTX 4060，请核对 NVIDIA 驱动。')
+            print('CUDA 初始化详细诊断（独立进程）：')
             try:
-                torch.cuda.init()
-            except Exception:
-                print('CUDA 初始化详细错误：')
-                traceback.print_exc()
+                result = subprocess.run([sys.executable, '-c',
+                                         'import torch; torch.cuda.init(); print("CUDA initialization succeeded")'],
+                                        capture_output=True, text=True, encoding='utf-8', errors='replace',
+                                        timeout=30, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                print('CUDA 诊断退出码：', result.returncode)
+                if result.stdout:
+                    print(result.stdout.strip())
+                if result.stderr:
+                    print(result.stderr.strip())
+                if result.returncode and not result.stderr:
+                    print('CUDA 初始化进程异常退出，未提供 Python 错误堆栈。请结合 NVIDIA 驱动信息检查。')
+            except (OSError, subprocess.TimeoutExpired) as error:
+                print('CUDA 诊断失败：', error)
             if torch.version.cuda.startswith('13.'):
                 print('CUDA 13.x 需要兼容的 R580 或更新 NVIDIA 驱动，请以官方兼容要求为准。')
         else:

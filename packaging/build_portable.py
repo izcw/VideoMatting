@@ -26,16 +26,20 @@ def write_entrypoints(cuda):
 
 
 def archive_package():
+    def included(path):
+        parts = path.relative_to(DEST).parts
+        return path.is_file() and parts[0] != 'data' and '__pycache__' not in parts and path.suffix != '.pyc'
+
     manifest = {}
     for path in sorted(DEST.rglob('*')):
-        if path.is_file() and path.name != '文件校验.json':
+        if included(path) and path.name != '文件校验.json':
             with path.open('rb') as stream:
                 manifest[path.relative_to(DEST).as_posix()] = hashlib.file_digest(stream, 'sha256').hexdigest()
     (DEST / '文件校验.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding='utf-8')
     archive = DEST.with_name(DEST.name + '.zip')
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, compresslevel=5) as package:
         for path in sorted(DEST.rglob('*')):
-            if path.is_file():
+            if included(path):
                 package.write(path, Path(DEST.name) / path.relative_to(DEST))
     with archive.open('rb') as stream:
         digest = hashlib.file_digest(stream, 'sha256').hexdigest()

@@ -39,7 +39,7 @@
 
 源码与绿色版共用三个入口：`一键启动.cmd`、`停止服务.cmd`、`检测系统.cmd`。命令文件内容完全相同，自动选择内置 runtime 或源码 .venv。源码首次启动会检查环境，缺失时自动安装依赖、下载模型并构建网页；该准备逻辑位于 `setup_environment.py`，无需单独运行安装命令。检测系统显示处理器、内存、CUDA 和模型状态；可用 NVIDIA GPU 会执行一次实际运算验证。
 
-每次运行「检测系统」会将窗口输出和错误堆栈追加保存到 `data/system-check.log`，包含 NVIDIA 驱动信息、实际 Python/PyTorch 路径、CUDA 初始化错误和模型状态。日志超过 5 MB 时保留一份上次日志；服务运行日志仍在 `data/server.log`、`data/server-error.log`。GPU 回退到 CPU 时可通过检测日志定位原因，日志仅保存在本机。
+每次运行「检测系统」会将窗口输出和错误堆栈追加保存到 `data/system-check.log`，包含 NVIDIA 驱动信息、实际 Python/PyTorch 路径、CUDA 初始化错误和模型状态。CUDA 初始化失败时在独立进程中诊断，记录输出与退出码，即使原生库崩溃也能完成日志保存。日志超过 5 MB 时保留一份上次日志；服务运行日志仍在 `data/server.log`、`data/server-error.log`。GPU 回退到 CPU 时可通过检测日志定位原因，日志仅保存在本机。
 
 保持启动窗口打开；关闭该窗口或按 Ctrl+C 即停止服务及子进程（正在处理的任务会中断）。再次启动若发现服务已运行，会复用现有服务，并提示关闭原启动窗口。启动提示使用中文，详细第三方错误日志位于 `data/server-error.log`。
 
