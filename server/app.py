@@ -5,6 +5,7 @@ import logging
 import threading
 import time
 import uuid
+import math
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -27,10 +28,25 @@ cancel_events: dict[str, threading.Event] = {}
 lock = threading.RLock()
 executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="matting")
 export_lock = threading.Lock()
+HISTORY_LIMIT = 10
+
+
+def prune_history():
+    with lock:
+        visible = sorted((j for j in jobs.values() if not j.get('history_hidden')),
+                         key=lambda j: j['created_at'], reverse=True)
+        for job in visible[HISTORY_LIMIT:]:
+            save(job['id'], history_hidden=True)
+
+
+def public_job(job: dict) -> dict:
+    return {**job, 'can_resume': not job.get('resume_blocked') and job['status'] in {'interrupted', 'failed', 'cancelled'}
+            and (DATA / job['id'] / 'source').is_file()}
 
 class ExportOptions(BaseModel):
     mode: Literal["transparent", "custom", "matte"] = "transparent"
     color: str = Field(default="#00b140", pattern=r"^#[0-9a-fA-F]{6}$")
+    audio: bool = False
 
 
 def save(job_id: str, **changes):
@@ -43,24 +59,68 @@ def save(job_id: str, **changes):
         temporary.replace(record)
 
 
+def record_resources(job_id: str, sample: dict):
+    """统计任务处理期间的整机占用；缺失的 GPU 数据不当作零。"""
+    with lock:
+        if job_id not in jobs or jobs[job_id]['status'] != 'processing':
+            return
+        stats = {key: dict(value) for key, value in jobs[job_id].get('resource_stats', {}).items()}
+        values = {'cpu': sample.get('cpu'), 'memory': sample.get('memory'),
+                  'gpu': (sample.get('gpu') or {}).get('usage')}
+        for key, value in values.items():
+            if not isinstance(value, (float, int)) or not math.isfinite(value):
+                continue
+            value = max(0, min(100, value))
+            previous = stats.get(key, {'count': 0, 'sum': 0, 'max': 0})
+            count, total = previous['count'] + 1, previous['sum'] + value
+            stats[key] = dict(count=count, sum=total, max=max(previous['max'], value), average=total / count)
+        save(job_id, resource_stats=stats)
+
+
+def monitor_task(job_id: str, stop: threading.Event):
+    import psutil
+    from .resources import snapshot
+    psutil.cpu_percent()  # 初始化本线程的 CPU 采样基线。
+    delay = 1
+    while not stop.wait(delay):
+        try:
+            record_resources(job_id, snapshot())
+        except Exception:
+            logger.warning('资源采样暂不可用 %s', job_id, exc_info=True)
+        delay = 3
+
+
 def execute(job_id: str):
     cancel = cancel_events[job_id]
     if cancel.is_set():
         return
     started = time.time()
     save(job_id, status="processing", started_at=started, stage="开始处理")
+    monitor_stop = threading.Event()
+    monitor_thread = threading.Thread(target=monitor_task, args=(job_id, monitor_stop), daemon=True)
+    monitor_thread.start()
     try:
-        metadata = engine.process(DATA / job_id, lambda **kw: save(job_id, **kw), cancel)
+        def report(**kw):
+            if 'progress' in kw:
+                kw['progress'] = max(jobs[job_id].get('progress', 0), kw['progress'])
+            save(job_id, **kw)
+        metadata = engine.process(DATA / job_id, report, cancel)
         if cancel.is_set():
             raise Cancelled()
         save(job_id, status="done", progress=100, stage="处理完成", metadata=metadata,
              elapsed_seconds=round(time.time() - started, 1))
+
     except Cancelled:
         save(job_id, status="cancelled", stage="已取消", elapsed_seconds=round(time.time() - started, 1))
     except Exception as error:
         logger.exception("处理失败 %s", job_id)
-        save(job_id, status="failed", stage="处理失败", error=str(error),
+        oom = isinstance(error, MemoryError) or any(word in str(error).lower() for word in ('not enough memory', 'out of memory', 'alloc_cpu', 'cannot allocate memory'))
+        save(job_id, status="interrupted" if oom else "failed", stage="内存不足，已保留检查点" if oom else "处理失败",
+             error="可用内存不足，已保留完成的步骤；关闭其他程序后点击任务恢复。" if oom else str(error),
              elapsed_seconds=round(time.time() - started, 1))
+    finally:
+        monitor_stop.set()
+        monitor_thread.join(timeout=3)
 
 
 @asynccontextmanager
@@ -69,12 +129,15 @@ async def lifespan(_app):
     for file in DATA.glob("*/job.json"):
         try:
             job = json.loads(file.read_text(encoding="utf-8"))
-            if job["status"] in {"queued", "processing"}:
-                job.update(status="failed", stage="任务因服务重启中断", error="请重新上传视频重试。")
+            if job["status"] in {"uploading", "queued", "processing"}:
+                if job['status'] == 'uploading':
+                    job['resume_blocked'] = True  # 上传未完成，原片可能不完整。
+                job.update(status="interrupted", stage="任务已中断，点击可恢复处理", error="服务已停止，可复用原视频重新处理。")
                 file.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
             jobs[job["id"]] = job
         except (ValueError, KeyError):
             logger.warning("忽略损坏任务记录 %s", file.parent.name)
+    prune_history()
     yield
     for event in cancel_events.values():
         event.set()
@@ -107,7 +170,7 @@ def lookup(job_id: str) -> dict:
     with lock:
         if job_id not in jobs:
             raise HTTPException(404, "任务不存在")
-        return dict(jobs[job_id])
+        return public_job(jobs[job_id])
 
 
 @app.get("/api/health")
@@ -123,7 +186,32 @@ def health():
 @app.get("/api/jobs")
 def list_jobs():
     with lock:
-        return sorted((dict(j) for j in jobs.values() if not j.get("history_hidden")), key=lambda j: j["created_at"], reverse=True)[:30]
+        return sorted((public_job(j) for j in jobs.values() if not j.get("history_hidden")), key=lambda j: j["created_at"], reverse=True)[:HISTORY_LIMIT]
+
+
+@app.get('/api/system')
+def system_status():
+    from .resources import snapshot, MEMORY_LIMIT
+    return {**snapshot(), 'device': health()['device'], 'memory_limit': MEMORY_LIMIT}
+
+
+@app.delete('/api/jobs/{job_id}')
+def delete_job(job_id: str):
+    with lock:
+        job = lookup(job_id)
+        if job['status'] in {'queued', 'processing', 'uploading'}:
+            raise HTTPException(409, '请先取消处理，再删除记录。')
+        save(job_id, history_hidden=True)
+    return {'deleted': True, 'files_deleted': False}
+
+
+@app.get('/api/jobs/{job_id}/preview-frame')
+def preview_frame(job_id: str):
+    lookup(job_id)
+    path = DATA / job_id / 'preview.png'
+    if not path.is_file():
+        raise HTTPException(404, '首帧尚未生成')
+    return FileResponse(path, media_type='image/png', headers={'Cache-Control': 'no-store'})
 
 
 @app.post("/api/history/clear")
@@ -163,11 +251,13 @@ async def upload(file: UploadFile = File(...)):
     except Exception:
         (folder / "source").unlink(missing_ok=True)
         save(job_id, status="failed", stage="上传失败", error="文件为空、过大或上传中断。")
+        prune_history()
         raise
     finally:
         await file.close()
     cancel_events[job_id] = threading.Event()
     save(job_id, status="queued", stage="等待处理", bytes=size)
+    prune_history()
     executor.submit(execute, job_id)
     return lookup(job_id)
 
@@ -175,6 +265,25 @@ async def upload(file: UploadFile = File(...)):
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
     return lookup(job_id)
+
+
+@app.post("/api/jobs/{job_id}/resume", status_code=202)
+def resume_job(job_id: str):
+    with lock:
+        job = lookup(job_id)
+        if job['status'] in {'queued', 'processing'}:
+            return job  # 刷新页面重复点击不创建第二个推理任务。
+        if not job['can_resume']:
+            raise HTTPException(409, '任务无法恢复，请重新上传原视频。')
+        if sum(j['status'] in {'uploading', 'queued', 'processing'} for j in jobs.values()) >= 3:
+            raise HTTPException(429, '队列已满，请等待当前任务完成。')
+        cancel_events[job_id] = threading.Event()
+        save(job_id, status='queued', stage='恢复处理：读取已保存的步骤与检查点', error=None,
+             elapsed_seconds=None, memory_wait=False, eta_seconds=None,
+             started_at=None, history_hidden=False, resumed_at=time.time())
+        prune_history()
+        executor.submit(execute, job_id)
+        return lookup(job_id)
 
 
 @app.post("/api/jobs/{job_id}/cancel")
@@ -210,6 +319,23 @@ def export_job(job_id: str, options: ExportOptions):
     job = lookup(job_id)
     if job["status"] != "done":
         raise HTTPException(409, "请等待抠像完成后再导出。")
+    if options.audio:
+        muted = export_job(job_id, ExportOptions(mode=options.mode, color=options.color))
+        folder = DATA / job_id
+        base = 'result.webm' if options.mode == 'transparent' else 'matte.mp4' if options.mode == 'matte' else f'background-{options.color[1:].lower()}.mp4'
+        output = folder / ('audio-' + base)
+        with export_lock:
+            if not output.exists():
+                temporary = output.with_name(output.stem + '.partial' + output.suffix)
+                try:
+                    run_media(['-i', str(folder / base), '-i', str(folder / 'source'), '-map', '0:v:0', '-map', '1:a:0?',
+                               '-c:v', 'copy', '-c:a', 'libopus' if output.suffix == '.webm' else 'aac',
+                               '-t', str(job['metadata']['duration']), str(temporary)], threading.Event())
+                    temporary.replace(output)
+                except Exception as error:
+                    temporary.unlink(missing_ok=True)
+                    raise HTTPException(500, f'音频合成失败：{error}')
+        return {'preview': muted['preview'], 'download': f'/api/jobs/{job_id}/audio/{output.name}'}
     if options.mode == "transparent":
         return {"preview": f"/api/jobs/{job_id}/result", "download": f"/api/jobs/{job_id}/download"}
     folder = DATA / job_id
@@ -234,6 +360,19 @@ def export_job(job_id: str, options: ExportOptions):
                 temporary.unlink(missing_ok=True)
                 raise HTTPException(500, f"导出失败：{error}")
     return {"preview": f"/api/jobs/{job_id}/exports/{output.stem}", "download": f"/api/jobs/{job_id}/exports/{output.stem}?download=true"}
+
+
+@app.get('/api/jobs/{job_id}/audio/{name}')
+def audio_download(job_id: str, name: str):
+    import re
+    job = lookup(job_id)
+    if job['status'] != 'done' or not re.fullmatch(r'audio-(result\.webm|matte\.mp4|background-[0-9a-f]{6}\.mp4)', name):
+        raise HTTPException(404)
+    path = DATA / job_id / name
+    if not path.exists():
+        raise HTTPException(404)
+    kind = 'WebM' if name.endswith('.webm') else 'AlphaMatte' if 'matte' in name else 'Background'
+    return FileResponse(path, filename=f'VideoMatting-{kind}-Audio-{job_id.replace("-", "")[:12]}{path.suffix}')
 
 
 @app.get("/api/jobs/{job_id}/exports/{name}")

@@ -14,8 +14,19 @@ app.whenReady().then(async () => {
   try {
     await win.loadURL('http://127.0.0.1:8765');
     await wait(800);
+    assert(await js(`document.querySelector('h1').textContent==='让人像，走出背景。' && document.querySelector('input[type=color]').value==='#3b82f6' && document.querySelector('.device').textContent.includes('建议使用配备 NVIDIA 显卡的设备')`), '新版文案、默认蓝色及显卡建议');
+    // Electron 使用独立浏览器存储，不修改用户浏览器中的当前任务。
+    await js(`localStorage.removeItem('video-matting-current-job');document.querySelector('.remove-material').click();void 0;`);
     assert(await js(`(()=>{let count=0;const input=document.querySelector('input[type=file]');input.click=()=>count++;document.querySelector('.viewport.original').click();document.querySelector('.upload-overlay').click();return count===2})()`), '点击上传区域未打开选择器');
-    await js(`[...document.querySelectorAll('.history button')].find(b=>b.querySelector('small').textContent.trim()==='已完成').click()`);
+    await js(`[...document.querySelectorAll('.history button')].find(b=>b.querySelector('small')?.textContent.trim()==='已完成').click()`);
+    await ready();
+    const selectedName = await js(`document.querySelector('.workspace-head strong').textContent.trim()`);
+    await wait(250);
+    assert(await js(`[...document.querySelectorAll('.player-label')].every(e=>/\\d+\\.\\d{2} MB/.test(e.textContent)) && document.querySelector('.processing-time').textContent.includes('处理用时') && document.querySelector('.history-info em').textContent.includes('创建时间') && document.querySelector('.history-info em').textContent.includes('用时')`), '两侧 MB、下载旁用时及历史创建时间/用时');
+    await win.reload();
+    await wait(800);
+    assert(await js(`document.querySelectorAll('video').length===0 && !document.querySelector('.export a.primary') && !document.querySelector('.phase-progress') && [...document.querySelectorAll('.history button:not(.clear-history)')].some(b=>b.querySelector('.history-info > span')?.textContent.trim()===${JSON.stringify(selectedName)})`), '刷新清空工作区且保留任务历史');
+    await js(`[...document.querySelectorAll('.history button:not(.clear-history)')].find(b=>b.querySelector('.history-info > span')?.textContent.trim()===${JSON.stringify(selectedName)}).click()`);
     await ready();
     assert(await js(`(()=>{const box=document.querySelector('.result-viewport'),background=document.querySelector('.video-background').getBoundingClientRect(),v=document.querySelector('video');const scale=Math.min(box.clientWidth/v.videoWidth,box.clientHeight/v.videoHeight);return Math.abs(background.width-v.videoWidth*scale)<1 && Math.abs(background.height-v.videoHeight*scale)<1 && background.width<box.clientWidth && getComputedStyle(box).backgroundColor===getComputedStyle(document.querySelector('.original')).backgroundColor})()`), '结果背景只覆盖原视频画幅，留白区域为相同灰色');
     await js(`document.querySelector('video').click();void 0;`);
@@ -31,6 +42,8 @@ app.whenReady().then(async () => {
     await js(`slider.value='1.9';slider.dispatchEvent(new Event('input',{bubbles:true}));void 0;`);
     await wait(300);
     assert(await js(`[...document.querySelectorAll('video')].every(v=>Math.abs(v.currentTime-1.9)<.05 && !v.seeking && v.paused)`), '未松开滑块时实时定位左右画面');
+    assert(await js(`document.querySelector('.seek-wrap output').textContent.includes('1.90s')`), '拖柄上方显示时间');
+    assert(await js(`document.querySelector('video').muted && document.querySelector('select[aria-label="导出音频"]').selectedIndex===0`), '默认静音播放与静音输出');
     const secondPreview = await js(`(()=>{const v=document.querySelector('video'),c=document.createElement('canvas');c.width=160;c.height=210;c.getContext('2d').drawImage(v,0,0,160,210);return c.toDataURL()})()`);
     assert(firstPreview!==secondPreview, '拖动期间画面应更新');
     await js(`window.dispatchEvent(new PointerEvent('pointerup'));slider.value='0';slider.dispatchEvent(new Event('input',{bubbles:true}));void 0;`);
@@ -94,7 +107,7 @@ app.whenReady().then(async () => {
     fs.writeFileSync(process.env.TEMP + '/video-matting-updated.png', (await win.webContents.capturePage()).toPNG());
     await js(`document.querySelector('.remove-material').click()`);
     assert(await js(`document.querySelectorAll('video').length===0 && !document.querySelector('.upload-overlay').disabled`), '删除当前素材');
-    await js(`(async()=>{window.realFetch=fetch;const records=await fetch('/api/jobs').then(r=>r.json());window.mockProgress={...records.find(j=>j.status==='done'),status:'processing',stage:'逐帧精细抠像',progress:37,completed_frames:20,total_frames:100,started_at:Date.now()/1000-30};window.fetch=(path,options)=>String(path)==='/api/jobs/'+window.mockProgress.id?Promise.resolve(new Response(JSON.stringify(window.mockProgress),{headers:{'content-type':'application/json'}})):window.realFetch(path,options);[...document.querySelectorAll('.history button')].find(b=>b.querySelector('small').textContent.trim()==='已完成').click()})()`);
+    await js(`(async()=>{window.realFetch=fetch;const records=await fetch('/api/jobs').then(r=>r.json());window.mockProgress={...records.find(j=>j.status==='done'),status:'processing',stage:'逐帧精细抠像',progress:37,completed_frames:20,total_frames:100,started_at:Date.now()/1000-30};window.fetch=(path,options)=>String(path)==='/api/jobs/'+window.mockProgress.id?Promise.resolve(new Response(JSON.stringify(window.mockProgress),{headers:{'content-type':'application/json'}})):window.realFetch(path,options);[...document.querySelectorAll('.history button')].find(b=>b.querySelector('small')?.textContent.trim()==='已完成').click()})()`);
     await wait(300);
     assert(await js(`document.querySelector('.phase-progress').textContent.includes('20/100 张 · 20%')`), '显示实时逐帧计数');
     assert(await js(`(()=>{const complete=document.querySelector('.phase-progress .complete'),active=document.querySelector('.phase-progress .active');return getComputedStyle(complete).backgroundColor==='rgb(98, 90, 214)' && getComputedStyle(complete.querySelector('span')).color==='rgb(255, 255, 255)' && getComputedStyle(complete.querySelector('small')).color==='rgb(255, 255, 255)' && getComputedStyle(active).backgroundColor==='rgb(239, 240, 243)' && getComputedStyle(active).borderRadius==='12px'})()`), '圆角灰色阶段卡片，完成后紫底白字');
@@ -111,6 +124,14 @@ app.whenReady().then(async () => {
     await js(`window.clearCalls=0;window.confirm=message=>{window.clearPrompt=message;return true};window.fetch=(path,options)=>{if(String(path)==='/api/history/clear'){window.clearCalls++;return Promise.resolve(new Response(JSON.stringify({cleared:5,files_deleted:false}),{headers:{'content-type':'application/json'}}))}if(String(path)==='/api/jobs')return Promise.resolve(new Response('[]',{headers:{'content-type':'application/json'}}));return window.realFetch(path,options)};document.querySelector('.clear-history').click();void 0;`);
     await wait(150);
     assert(await js(`window.clearCalls===1 && window.clearPrompt.includes('不删除') && !document.querySelector('.history button:not(.clear-history)') && document.querySelector('.history-message').textContent.includes('已清空 5 条记录') && document.querySelectorAll('video').length===2`), '确认清空后移除列表并保留当前预览');
+    await js(`(async()=>{const records=await window.realFetch('/api/jobs').then(r=>r.json());window.resumeRecord={...records.find(j=>j.status==='done'),status:'interrupted',can_resume:true,stage:'任务已中断'};window.resumeCalls=0;window.fetch=(path,options)=>{path=String(path);if(path==='/api/jobs')return Promise.resolve(new Response(JSON.stringify([window.resumeRecord])));if(path==='/api/jobs/'+window.resumeRecord.id+'/resume'){window.resumeCalls++;window.resumeRecord={...window.resumeRecord,status:'queued',can_resume:false,stage:'恢复处理'};return Promise.resolve(new Response(JSON.stringify(window.resumeRecord)))}if(path==='/api/jobs/'+window.resumeRecord.id)return Promise.resolve(new Response(JSON.stringify(window.resumeRecord)));return window.realFetch(path,options)};document.querySelector('.remove-material').click();const data=new DataTransfer();data.items.add(new File(['test'],'resume.mp4',{type:'video/mp4'}));document.querySelector('.viewport.original').dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:data}))})()`);
+    await wait(650);
+    await js(`document.querySelector('.history button:not(.clear-history)').click();void 0;`);
+    await wait(150);
+    assert(await js(`window.resumeCalls===1 && document.querySelector('.badge').textContent.includes('排队')`), '点击中断任务恢复处理');
+    await js(`document.querySelector('.history button:not(.clear-history)').click();void 0;`);
+    await wait(150);
+    assert(await js(`window.resumeCalls===1`), '重复点击未完成任务只连接进度，不重复启动');
     console.log('拖动实时画面、实时帧数及进度、中文标题、同排布局、Alpha 隐藏背景，以及原有交互：通过');
     clearTimeout(timer); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(timer); app.exit(1); }

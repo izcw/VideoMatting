@@ -6,6 +6,7 @@ import time
 import subprocess
 import shutil
 import threading
+import json
 from pathlib import Path
 from typing import Callable
 
@@ -23,6 +24,32 @@ Progress = Callable[..., None]
 
 class Cancelled(Exception):
     pass
+
+
+def checkpoint(folder, processor, warmup, completed):
+    import torch
+    state = {key: value for key, value in vars(processor).items()
+             if key not in {'network', 'image_feature_store'}}
+    payload = dict(version=1, state=state, features=processor.image_feature_store._store,
+                   warmup=warmup, completed=completed)
+    temporary = folder / 'checkpoint.tmp'
+    torch.save(payload, temporary)
+    temporary.replace(folder / 'checkpoint.pt')
+
+
+def restore_checkpoint(folder, processor, device):
+    import torch
+    path = folder / 'checkpoint.pt'
+    if not path.exists():
+        return -1, 0
+    # 仅加载本程序写入的任务目录检查点，不接受用户上传的 pickle。
+    saved = torch.load(path, map_location=device, weights_only=False)
+    if saved['version'] != 1:
+        raise ValueError('检查点版本不兼容')
+    processor.__dict__.update(saved['state'])
+    processor.device = torch.device(device)
+    processor.image_feature_store._store = saved['features']
+    return saved['warmup'], saved['completed']
 
 
 def ffmpeg() -> str:
@@ -114,14 +141,14 @@ class MattingEngine:
         self.config = None
         self.refiner = None
 
-    def load(self, progress: Progress):
+    def load(self, progress: Progress, selectors=True):
         import torch
         from torchvision.models.segmentation import (
             DeepLabV3_MobileNet_V3_Large_Weights, deeplabv3_mobilenet_v3_large,
         )
         device = "cuda" if torch.cuda.is_available() else "cpu"
         torch.set_num_threads(max(1, min(4, os.cpu_count() or 1)))
-        if self.segmenter is None:
+        if selectors and self.segmenter is None:
             progress(stage="加载自动人物识别模型", progress=12)
             weights = DeepLabV3_MobileNet_V3_Large_Weights.DEFAULT
             self.segment_transform = weights.transforms()
@@ -143,7 +170,7 @@ class MattingEngine:
             model = MatAnyone2(cfg, single_object=True).to(device).eval()
             model.load_weights(torch.load(MODEL_PATH, map_location=device, weights_only=True))
             self.model, self.config = model, cfg
-        if self.refiner is None:
+        if selectors and self.refiner is None:
             progress(stage="加载 SAM 2 首帧精细分割模型", progress=18)
             sys.path.insert(0, str(ROOT / "vendor" / "SAM2"))
             from sam2.build_sam import build_sam2
@@ -180,6 +207,7 @@ class MattingEngine:
 
     def process(self, folder: Path, progress: Progress, cancel: threading.Event) -> dict:
         import torch
+        from .resources import wait_memory, wait_compute_memory
         source = folder / "source"
         metadata = inspect_video(source)
         required_space = metadata["width"] * metadata["height"] * metadata["frames"] * 5
@@ -190,60 +218,115 @@ class MattingEngine:
         frames_dir.mkdir(exist_ok=True)
         alpha_dir.mkdir(exist_ok=True)
         rate = str(metadata["fps"])
-        run_media(["-i", str(source), "-an", "-r", rate, "-start_number", "0",
-                   str(frames_dir / "%06d.png")], cancel,
-                  lambda value: progress(progress=3 + 5 * value), metadata["duration"])
+        # 兼容升级前的完整解码缓存；不信任只有部分帧的目录。
+        if not (folder / 'decoded.json').exists() and all((frames_dir / f'{i:06d}.png').is_file() for i in range(metadata['frames'])):
+            try:
+                with Image.open(frames_dir / f"{metadata['frames'] - 1:06d}.png") as last:
+                    last.verify()
+                (folder / 'decoded.json').write_text(json.dumps(metadata))
+            except (OSError, ValueError):
+                pass  # 中断解码留下的半帧不能作为完整缓存。
+        if not (folder / 'decoded.json').exists():
+            run_media(["-i", str(source), "-an", "-r", rate, "-start_number", "0", '-compression_level', '1',
+                       str(frames_dir / "%06d.png")], cancel,
+                      lambda value: progress(progress=3 + 5 * value), metadata["duration"])
+            (folder / 'decoded.json').write_text(json.dumps(metadata))
         frames = sorted(frames_dir.glob("*.png"))
         if not frames:
             raise ValueError("原视频没有有效画面。")
         progress(stage="准备浏览器原片预览", progress=8)
-        run_media(["-framerate", rate, "-i", str(frames_dir / "%06d.png"), "-an",
+        if not (folder / 'preview-ready').exists():
+            run_media(["-framerate", rate, "-i", str(frames_dir / "%06d.png"), '-i', str(source),
+                   '-map', '0:v:0', '-map', '1:a:0?', '-c:a', 'aac',
                    "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p",
+                   '-vf', 'pad=ceil(iw/2)*2:ceil(ih/2)*2',
                    "-movflags", "+faststart", str(folder / "original-preview.mp4")], cancel,
                   lambda value: progress(progress=8 + 3 * value), metadata["duration"])
+            (folder / 'preview-ready').touch()
         progress(original_ready=True)
-        device = self.load(progress)
+        if (folder / 'alpha-ready').exists() and all((alpha_dir / f'{i:06d}.png').is_file() for i in range(len(frames))):
+            return self.encode(folder, metadata, len(frames), progress, cancel)
+        wait_memory(cancel, progress)
+        device = self.load(progress, selectors=not (folder / 'first-mask.png').exists())
         if cancel.is_set():
             raise Cancelled()
         from matanyone2.inference.inference_core import InferenceCore
+        import matanyone2.inference.memory_manager as memory_module
+        from matanyone2.model.utils.memory_utils import get_similarity
+        from .inference_memory import bounded_similarity
+        memory_module.get_similarity = bounded_similarity(get_similarity,
+            lambda required: wait_compute_memory(cancel, progress, max(2 * 2**30, required), device))
         processor = InferenceCore(self.model, cfg=self.config)
+        warmup_done, completed = restore_checkpoint(folder, processor, device)
         first = Image.open(frames[0]).convert("RGB")
         progress(stage="自动选中首帧人物", progress=20, device=device)
         with torch.inference_mode():
-            mask = self.first_mask(first, device)
-            Image.fromarray(mask * 255).save(folder / "first-mask.png")
+            mask_path = folder / 'first-mask.png'
+            if mask_path.exists():
+                mask = (np.asarray(Image.open(mask_path).convert('L')) > 127).astype(np.uint8)
+            else:
+                mask = self.first_mask(first, device)
+                Image.fromarray(mask * 255).save(mask_path)
             mask_tensor = torch.from_numpy(matanyone_prompt(mask)).to(device)
             first_tensor = torch.from_numpy(np.array(first).copy()).permute(2, 0, 1).float().to(device) / 255
             progress(stage="首帧预热，稳定细节", progress=22)
-            processor.step(first_tensor, mask_tensor, objects=[1])
-            for warmup in range(10):
+            # 原分辨率 attention 的临时内存随像素量增长，预留空间而不是降低画质。
+            reserve = max(2 * 2**30, metadata['width'] * metadata['height'] * 2200)
+            if warmup_done < 0:
+                wait_compute_memory(cancel, progress, reserve, device)
+                processor.step(first_tensor, mask_tensor, objects=[1])
+                checkpoint(folder, processor, 0, 0)
+            for warmup in range(max(0, warmup_done), 10):
                 if cancel.is_set():
                     raise Cancelled()
+                wait_compute_memory(cancel, progress, reserve, device)
                 processor.step(first_tensor, first_frame_pred=True)
+                checkpoint(folder, processor, warmup + 1, 0)
                 progress(stage=f"首帧预热（{warmup+1}/10）", progress=22+(warmup+1)*.2)
-            for index, frame_path in enumerate(frames):
+            frame_times = []
+            for index in range(completed, len(frames)):
+                frame_path = frames[index]
                 if cancel.is_set():
                     raise Cancelled()
+                wait_compute_memory(cancel, progress, reserve, device)
+                frame_started = time.monotonic()
                 image = np.asarray(Image.open(frame_path).convert("RGB")).copy()
                 tensor = torch.from_numpy(image).permute(2, 0, 1).float().to(device) / 255
                 prediction = processor.step(tensor, first_frame_pred=index == 0)
                 alpha = processor.output_prob_to_mask(prediction).cpu().numpy()
                 validate_alpha(alpha, mask)
                 Image.fromarray(np.round(np.clip(alpha, 0, 1) * 255).astype(np.uint8)).save(
-                    alpha_dir / f"{index:06d}.png")
+                    alpha_dir / f"{index:06d}.png", compress_level=1)
+                # 定期落盘完整时序状态，恢复最多重做最近 4 帧，不跳帧或减少预热。
+                if (index + 1) % 5 == 0 or index + 1 == len(frames):
+                    checkpoint(folder, processor, 10, index + 1)
+                if index == completed or index % 5 == 0:
+                    preview = Image.fromarray(image).convert('RGBA')
+                    preview.putalpha(Image.fromarray(np.round(np.clip(alpha, 0, 1) * 255).astype(np.uint8)))
+                    preview.thumbnail((720, 720))  # 仅进度预览缩略图，母版不缩小。
+                    preview.save(folder / 'preview.tmp', format='PNG', compress_level=1)
+                    (folder / 'preview.tmp').replace(folder / 'preview.png')
+                frame_times.append(time.monotonic() - frame_started)
                 progress(stage="逐帧精细抠像", progress=25 + 60 * (index + 1) / len(frames),
-                         completed_frames=index + 1, total_frames=len(frames))
+                         completed_frames=index + 1, total_frames=len(frames), preview_frame=index + 1,
+                         eta_seconds=round(np.mean(frame_times[-10:]) * (len(frames) - index - 1)), memory_wait=False)
         del processor
+        (folder / 'alpha-ready').touch()
+        return self.encode(folder, metadata, len(frames), progress, cancel, device)
+
+    def encode(self, folder, metadata, frame_count, progress, cancel, device='cached'):
+        frames_dir, alpha_dir = folder / 'frames', folder / 'alpha'
+        rate = str(metadata['fps'])
         progress(stage="合成高质量透明 WebM", progress=88)
         output = folder / "result.webm"
         run_media(["-framerate", rate, "-i", str(frames_dir / "%06d.png"),
                    "-framerate", rate, "-i", str(alpha_dir / "%06d.png"),
                    "-filter_complex", "[0:v]format=yuva420p[c];[1:v]format=gray[a];[c][a]alphamerge=shortest=1[v]",
                    "-map", "[v]", "-an", "-c:v", "libvpx-vp9", "-crf", "16", "-b:v", "0",
-                   "-pix_fmt", "yuva420p", "-auto-alt-ref", "0", str(output)], cancel,
+                   "-pix_fmt", "yuva420p", "-auto-alt-ref", "0", '-row-mt', '1', str(output)], cancel,
                   lambda value: progress(progress=88 + 11 * value), metadata["duration"])
         # 母版保留原片、PNG 和参数；输出不靠绿色预览视频再次转码。
-        return {**metadata, "frames": len(frames), "size": output.stat().st_size,
+        return {**metadata, "frames": frame_count, "size": output.stat().st_size,
                 "model": "MatAnyone 2", "selector": "DeepLabV3 MobileNet + SAM 2.1", "device": device}
 
 

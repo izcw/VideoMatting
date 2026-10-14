@@ -8,6 +8,48 @@ from fastapi.testclient import TestClient
 module = importlib.import_module("server.app")
 
 
+def test_resource_statistics_are_per_task_persisted_and_processing_only(client):
+    import json
+    first = client.post('/api/jobs', files={'file': ('first.mp4', b'video')}).json()['id']
+    second = client.post('/api/jobs', files={'file': ('second.mp4', b'video')}).json()['id']
+    module.record_resources(first, {'cpu': 99, 'memory': 99})
+    assert 'resource_stats' not in module.jobs[first]  # 排队期间不采样。
+    module.save(first, status='processing')
+    module.record_resources(first, {'cpu': 20, 'memory': 40, 'gpu': None})
+    module.record_resources(first, {'cpu': 60, 'memory': 50, 'gpu': {'usage': 30}})
+    stats = client.get(f'/api/jobs/{first}').json()['resource_stats']
+    assert stats['cpu']['max'] == 60 and stats['cpu']['average'] == 40
+    assert stats['memory']['average'] == 45 and stats['gpu']['count'] == 1
+    assert 'resource_stats' not in module.jobs[second]
+    module.save(first, status='done')
+    module.record_resources(first, {'cpu': 100, 'memory': 100})
+    assert module.jobs[first]['resource_stats'] == stats
+    assert json.loads((module.DATA / first / 'job.json').read_text(encoding='utf-8'))['resource_stats'] == stats
+    module.save(first, status='processing')  # 同一任务重试继续累计。
+    module.record_resources(first, {'cpu': 40, 'memory': 45})
+    assert module.jobs[first]['resource_stats']['cpu']['count'] == 3
+    assert module.jobs[first]['resource_stats']['cpu']['average'] == 40
+
+
+def test_single_delete_preserves_media_and_blocks_active(client):
+    job = client.post('/api/jobs', files={'file': ('test.mp4', b'original')}).json()
+    path = f"/api/jobs/{job['id']}"
+    assert client.delete(path).status_code == 409
+    module.save(job['id'], status='failed')
+    assert client.delete(path).json()['files_deleted'] is False
+    assert client.get('/api/jobs').json() == []
+    assert (module.DATA / job['id'] / 'source').read_bytes() == b'original'
+
+
+def test_progress_preview_is_available_before_completion(client):
+    job = client.post('/api/jobs', files={'file': ('test.mp4', b'original')}).json()
+    from PIL import Image
+    Image.new('RGBA', (8, 8), (255, 0, 0, 127)).save(module.DATA / job['id'] / 'preview.png')
+    response = client.get(f"/api/jobs/{job['id']}/preview-frame")
+    assert response.status_code == 200 and response.headers['content-type'] == 'image/png'
+    assert response.headers['cache-control'] == 'no-store'
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "DATA", tmp_path)
@@ -117,6 +159,63 @@ def test_clear_history_refuses_active_tasks_and_cross_site(client):
     assert len(client.get('/api/jobs').json()) == 1
 
 
+def test_history_keeps_latest_ten_without_deleting_material(client):
+    ids = []
+    for index in range(12):
+        job = client.post('/api/jobs', files={'file': (f'{index}.mp4', b'original')}).json()
+        ids.append(job['id'])
+        module.save(job['id'], status='done')
+    visible = client.get('/api/jobs').json()
+    assert len(visible) == 10
+    assert {j['id'] for j in visible} == set(ids[-10:])
+    assert module.jobs[ids[0]]['history_hidden']
+    assert (module.DATA / ids[0] / 'source').read_bytes() == b'original'
+
+
+def test_resume_reuses_source_and_does_not_duplicate_active_job(client):
+    job = client.post('/api/jobs', files={'file': ('resume.mp4', b'original')}).json()
+    module.save(job['id'], status='interrupted', error='服务中断', progress=50)
+    module.executor.submit.reset_mock()
+    response = client.post(f"/api/jobs/{job['id']}/resume")
+    assert response.status_code == 202 and response.json()['status'] == 'queued'
+    assert response.json()['error'] is None and response.json()['progress'] == 50
+    assert not module.cancel_events[job['id']].is_set()
+    assert (module.DATA / job['id'] / 'source').read_bytes() == b'original'
+    assert client.post(f"/api/jobs/{job['id']}/resume").status_code == 202
+    module.executor.submit.assert_called_once()
+
+
+def test_resume_missing_source_or_done_is_rejected(client):
+    job = client.post('/api/jobs', files={'file': ('resume.mp4', b'original')}).json()
+    module.save(job['id'], status='done')
+    assert client.post(f"/api/jobs/{job['id']}/resume").status_code == 409
+    module.save(job['id'], status='interrupted')
+    (module.DATA / job['id'] / 'source').unlink()
+    assert client.post(f"/api/jobs/{job['id']}/resume").status_code == 409
+
+
+def test_restart_preserves_interrupted_tasks_for_manual_resume(tmp_path, monkeypatch):
+    import json
+    import uuid
+    import time
+    monkeypatch.setattr(module, 'DATA', tmp_path)
+    monkeypatch.setattr(module, 'jobs', {})
+    monkeypatch.setattr(module, 'cancel_events', {})
+    mock_executor = Mock()
+    monkeypatch.setattr(module, 'executor', mock_executor)
+    job_id = str(uuid.uuid4())
+    folder = tmp_path / job_id
+    folder.mkdir()
+    (folder / 'source').write_bytes(b'complete original')
+    (folder / 'job.json').write_text(json.dumps({'id': job_id, 'name': 'retry.mp4', 'status': 'processing', 'created_at': time.time(), 'original_ready': False}), encoding='utf-8')
+    with TestClient(module.app) as connection:
+        record = connection.get(f'/api/jobs/{job_id}').json()
+        assert record['status'] == 'interrupted' and record['can_resume']
+        mock_executor.submit.assert_not_called()
+        assert connection.post(f'/api/jobs/{job_id}/resume').status_code == 202
+        mock_executor.submit.assert_called_once()
+
+
 def test_export_modes_and_background_pixels(client):
     import numpy as np
     from PIL import Image
@@ -161,3 +260,23 @@ def test_export_rejects_unready_invalid_modes_and_color(client):
     assert client.post(base + "/export", json={"mode": "unknown"}).status_code == 422
     assert client.post(base + "/export", json={"mode": "custom", "color": "../../x"}).status_code == 422
     assert client.get(base + "/exports/source").status_code == 404
+
+
+def test_audio_export_preserves_alpha_and_adds_audio(client):
+    from server.pipeline import run_media
+    from PIL import Image
+    job = client.post('/api/jobs', files={'file': ('audio.mp4', b'x')}).json()
+    folder = module.DATA / job['id']
+    run_media(['-f', 'lavfi', '-i', 'color=size=64x64:rate=10', '-f', 'lavfi', '-i', 'sine=frequency=440',
+               '-t', '0.3', '-c:v', 'libx264', '-c:a', 'aac', '-f', 'mp4', str(folder / 'source')], threading.Event())
+    Image.new('RGBA', (64, 64), (180, 60, 30, 80)).save(folder / 'rgba.png')
+    run_media(['-loop', '1', '-i', str(folder / 'rgba.png'), '-t', '0.3', '-c:v', 'libvpx-vp9', '-lossless', '1',
+               '-pix_fmt', 'yuva420p', '-auto-alt-ref', '0', str(folder / 'result.webm')], threading.Event())
+    module.save(job['id'], status='done', metadata={'duration': .3})
+    response = client.post(f"/api/jobs/{job['id']}/export", json={'mode': 'transparent', 'audio': True})
+    assert response.status_code == 200, response.text
+    assert client.get(response.json()['download']).status_code == 200
+    run_media(['-c:v', 'libvpx-vp9', '-i', str(folder / 'audio-result.webm'), '-frames:v', '1', str(folder / 'verify.png')], threading.Event())
+    assert Image.open(folder / 'verify.png').getpixel((0, 0))[3] == 80
+    run_media(['-i', str(folder / 'audio-result.webm'), '-map', '0:a:0', str(folder / 'verify.wav')], threading.Event())
+    assert (folder / 'verify.wav').stat().st_size > 100
