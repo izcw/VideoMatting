@@ -11,7 +11,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 def test_cmd_files_use_windows_line_endings():
-    for name in ["一键启动.cmd", "停止服务.cmd", "安装环境.cmd"]:
+    for name in ["一键启动.cmd", "停止服务.cmd", "检测系统.cmd"]:
         content = (ROOT / name).read_bytes()
         assert b"\r\n" in content
         assert b"\n" not in content.replace(b"\r\n", b""), "CMD 中文脚本必须使用 CRLF"

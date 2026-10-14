@@ -15,13 +15,49 @@ def copy_tree(source, target):
     shutil.copytree(source, target, ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.git', '.pytest_cache'))
 
 
+def write_entrypoints(cuda):
+    for name in ('一键启动.cmd', '停止服务.cmd', '检测系统.cmd', 'device_check.py', 'launcher.py'):
+        shutil.copy2(ROOT / name, DEST / name)
+    text = (ROOT / 'packaging/使用说明.txt').read_text(encoding='utf-8')
+    if cuda:
+        text = text.replace('Windows x64 CPU 绿色版', 'Windows x64 GPU + CPU 绿色版')
+        text = text.replace('此包内置 CPU 运行库，即使有 NVIDIA 显卡也不会自动启用 CUDA。', '此包内置 PyTorch 2.14.1 + CUDA 13.0，自动检测 NVIDIA CUDA GPU；不可用时使用 CPU。\n使用 GPU 需安装兼容 CUDA 13.0 的 NVIDIA 驱动；无需另装 CUDA Toolkit。\nAMD/Intel 显卡不提供 GPU 加速，与当前源程序支持范围一致。\n显存不足仍可能暂停或报错，不会为了运行而自动降低分辨率或画质。\n当前打包机无 NVIDIA GPU，GPU 真机运行请在目标电脑验收。')
+    (DEST / '使用说明.txt').write_bytes(text.replace('\r\n', '\n').replace('\n', '\r\n').encode('utf-8'))
+
+
+def archive_package():
+    manifest = {}
+    for path in sorted(DEST.rglob('*')):
+        if path.is_file() and path.name != '文件校验.json':
+            with path.open('rb') as stream:
+                manifest[path.relative_to(DEST).as_posix()] = hashlib.file_digest(stream, 'sha256').hexdigest()
+    (DEST / '文件校验.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding='utf-8')
+    archive = DEST.with_name(DEST.name + '.zip')
+    with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, compresslevel=5) as package:
+        for path in sorted(DEST.rglob('*')):
+            if path.is_file():
+                package.write(path, Path(DEST.name) / path.relative_to(DEST))
+    with archive.open('rb') as stream:
+        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+    archive.with_suffix('.zip.sha256').write_text(f'{digest}  {archive.name}\n', encoding='utf-8')
+    print(json.dumps(dict(folder=str(DEST), archive=str(archive), bytes=archive.stat().st_size, sha256=digest)), flush=True)
+
+
 def main():
     global DEST
     parser = argparse.ArgumentParser()
     parser.add_argument('--cuda', action='store_true')
+    parser.add_argument('--refresh-entrypoints', action='store_true', help='同步已有发布目录的三个入口并重新压缩')
     args = parser.parse_args()
     if not args.cuda:
         DEST = ROOT / 'releases' / 'VideoMatting-1.0.0-win64-cpu'
+    if args.refresh_entrypoints:
+        build = json.loads((DEST / 'build-info.json').read_text(encoding='utf-8'))
+        if bool(build.get('cuda')) != args.cuda:
+            raise SystemExit('已有运行库与所选打包类型不一致。')
+        write_entrypoints(args.cuda)
+        archive_package()
+        return
     if DEST.exists():
         raise SystemExit('目标已存在，请使用新的发布目录，避免覆盖。')
     DEST.mkdir(parents=True)
@@ -80,29 +116,9 @@ def main():
         target = DEST / 'models' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / 'models' / name, target)
-    for name in ('启动清影工坊.cmd', '停止清影工坊.cmd', '使用说明.txt', '检测运行设备.cmd', 'device_check.py'):
-        text = (ROOT / 'packaging' / name).read_text(encoding='utf-8')
-        if args.cuda:
-            text = text.replace('此版本使用本机 CPU 处理，视频不会上传到云端。', '自动检测 NVIDIA CUDA GPU，无可用 GPU 时使用 CPU。视频不会上传到云端。')
-            text = text.replace('Windows x64 CPU 绿色版', 'Windows x64 GPU + CPU 绿色版')
-            text = text.replace('此包内置 CPU 运行库，即使有 NVIDIA 显卡也不会自动启用 CUDA。', '此包内置 PyTorch 2.14.1 + CUDA 13.0，自动检测 NVIDIA CUDA GPU；不可用时使用 CPU。\n使用 GPU 需安装兼容 CUDA 13.0 的 NVIDIA 驱动；无需另装 CUDA Toolkit。\nAMD/Intel 显卡不提供 GPU 加速，与当前源程序支持范围一致。\n显存不足仍可能暂停或报错，不会为了运行而自动降低分辨率或画质。\n当前打包机无 NVIDIA GPU，GPU 真机运行请在目标电脑验收。')
-        (DEST / name).write_bytes(text.replace('\r\n', '\n').replace('\n', '\r\n').encode('utf-8'))
+    write_entrypoints(args.cuda)
     (DEST / 'build-info.json').write_text(json.dumps(dict(version='1.0.0', torch='2.14.1', torchvision='0.29.1', cuda='13.0' if args.cuda else None, models_bundled=True), indent=2), encoding='utf-8')
-    manifest = {}
-    for path in sorted(DEST.rglob('*')):
-        if path.is_file():
-            with path.open('rb') as stream:
-                manifest[path.relative_to(DEST).as_posix()] = hashlib.file_digest(stream, 'sha256').hexdigest()
-    (DEST / '文件校验.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding='utf-8')
-    archive = DEST.with_name(DEST.name + '.zip')
-    with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, compresslevel=5) as package:
-        for path in sorted(DEST.rglob('*')):
-            if path.is_file():
-                package.write(path, Path(DEST.name) / path.relative_to(DEST))
-    with archive.open('rb') as stream:
-        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
-    archive.with_suffix('.zip.sha256').write_text(f'{digest}  {archive.name}\n', encoding='utf-8')
-    print(json.dumps(dict(folder=str(DEST), archive=str(archive), bytes=archive.stat().st_size, sha256=digest)), flush=True)
+    archive_package()
 
 
 if __name__ == '__main__':

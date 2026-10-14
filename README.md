@@ -6,9 +6,9 @@
 
 ### Windows 绿色版
 
-推荐完整 GPU＋CPU 包：`releases/VideoMatting-1.0.0-win64.zip`（约 2.57 GB）。包含 PyTorch 2.14.1+cu130 / torchvision 0.29.1+cu130 和全部模型，后端代码与源程序一致；兼容 NVIDIA GPU 时使用 CUDA，否则 CPU。适用于 RTX 4060 等支持的 GPU，目标机需兼容 CUDA 13.0 的 NVIDIA 驱动，无需安装 CUDA Toolkit；不支持 AMD/Intel GPU 加速。`检测运行设备.cmd` 可在目标电脑实际测试 CUDA 运算。构建命令追加 `--cuda`，需先在 `releases/cuda-wheels` 下载对应官方 Windows Python 3.13 wheel。已从压缩包在隔离路径验证 CUDA 版运行库导入、CPU 回退推理、编码、CMD 启停；本机无 NVIDIA 显卡，尚未完成 GPU 真机推理验收。显存容量仍限制可处理的视频尺寸，GPU 支持不代表 8 GB 显存可处理所有 4K 视频。
+推荐完整 GPU＋CPU 包：`releases/VideoMatting-1.0.0-win64.zip`（约 2.57 GB）。包含 PyTorch 2.14.1+cu130 / torchvision 0.29.1+cu130 和全部模型，后端代码与源程序一致；兼容 NVIDIA GPU 时使用 CUDA，否则 CPU。适用于 RTX 4060 等支持的 GPU，目标机需兼容 CUDA 13.0 的 NVIDIA 驱动，无需安装 CUDA Toolkit；不支持 AMD/Intel GPU 加速。`检测系统.cmd` 可在目标电脑实际测试 CUDA 运算。构建命令追加 `--cuda`，需先在 `releases/cuda-wheels` 下载对应官方 Windows Python 3.13 wheel。已从压缩包在隔离路径验证 CUDA 版运行库导入、CPU 回退推理、编码、CMD 启停；本机无 NVIDIA 显卡，尚未完成 GPU 真机推理验收。显存容量仍限制可处理的视频尺寸，GPU 支持不代表 8 GB 显存可处理所有 4K 视频。
 
-当前只发布上述 GPU＋CPU 合一包，不添加 `-gpu` 后缀；如单独构建 CPU 包，其名称增加 `-cpu` 后缀。完整解压后双击「启动清影工坊.cmd」，无需安装 Python、Node.js 或下载模型。关闭启动窗口即停止服务。包含全部三个模型、不包含用户视频和历史任务；界面、功能与处理算法直接使用当前源程序，不另做精简版。请保留第三方许可，MatAnyone2 的 S-Lab 许可限制商业用途。
+当前只发布上述 GPU＋CPU 合一包，不添加 `-gpu` 后缀；如单独构建 CPU 包，其名称增加 `-cpu` 后缀。完整解压后双击「一键启动.cmd」，无需安装 Python、Node.js 或下载模型。关闭启动窗口即停止服务。包含全部三个模型、不包含用户视频和历史任务；界面、功能与处理算法直接使用当前源程序，不另做精简版。请保留第三方许可，MatAnyone2 的 S-Lab 许可限制商业用途。
 
 构建：`.venv\Scripts\python.exe packaging/build_portable.py --cuda`（已有发布目录时拒绝覆盖）。验证：`.venv\Scripts\python.exe packaging/verify_portable.py releases/VideoMatting-1.0.0-win64.zip`。验证会在临时中文空格目录解压、清理开发环境变量，以独立端口测试导入、模型推理、FFmpeg、CMD 启动及窗口关闭后服务退出；不会停止 8765 上已有服务。已通过同一电脑的隔离目录验证，尚未在另一台干净 Windows 电脑验证。
 
@@ -37,6 +37,8 @@
 
 当前开发机已安装环境和模型。双击 `一键启动.cmd`，浏览器打开 `http://127.0.0.1:8765`；上传原视频后自动处理，完成后下载结果。停止服务可双击 `停止服务.cmd`，该入口只停止启动器登记的本工具进程。
 
+源码与绿色版共用三个入口：`一键启动.cmd`、`停止服务.cmd`、`检测系统.cmd`。命令文件内容完全相同，自动选择内置 runtime 或源码 .venv。源码首次启动会检查环境，缺失时自动安装依赖、下载模型并构建网页；该准备逻辑位于 `setup_environment.py`，无需单独运行安装命令。检测系统显示处理器、内存、CUDA 和模型状态；可用 NVIDIA GPU 会执行一次实际运算验证。
+
 保持启动窗口打开；关闭该窗口或按 Ctrl+C 即停止服务及子进程（正在处理的任务会中断）。再次启动若发现服务已运行，会复用现有服务，并提示关闭原启动窗口。启动提示使用中文，详细第三方错误日志位于 `data/server-error.log`。
 
 左侧预览区域支持点击选择和拖放上传，上方“删除素材 / 重新制作”仅清空当前选择，保留磁盘历史。默认循环播放，空格同步暂停/继续；两侧可各自全屏，也可对比全屏。上传、解码、加载、预热、逐帧抠像、合成均显示阶段进度；逐帧开始后动态估算剩余时间，估算包含初始化开销，不能当作准确承诺。
@@ -45,7 +47,7 @@
 
 页面与本地处理无需按次付费，但不代表依赖模型具有免费商用许可，见文末许可说明。
 
-新电脑先安装 Python 3.13、Node.js 与 pnpm 10.18，再运行 `安装环境.cmd`。首次需要联网下载依赖和模型，之后在权重齐备时可离线处理。默认安装为 CPU 版；NVIDIA GPU 机器需按 PyTorch 官方安装指南选择与驱动兼容的 CUDA 版 torch/torchvision，不直接照搬 CPU 锁文件。
+新电脑先安装 Python 3.13、Node.js 与 pnpm 10.18，再运行 `一键启动.cmd`，缺失的环境会自动准备。首次需要联网下载依赖和模型，之后在权重齐备时可离线处理。默认安装为 CPU 版；NVIDIA GPU 机器需按 PyTorch 官方安装指南选择与驱动兼容的 CUDA 版 torch/torchvision，不直接照搬 CPU 锁文件。
 
 ## 实际处理流程
 

@@ -52,7 +52,7 @@ print(json.dumps({'imports':True,'isolated':True,'models':True,'inference':True,
     # 调用实际 CMD 入口，而不是仅调用 Python 启动函数。
     log = root / 'startup.log'
     with log.open('wb') as output:
-        process = subprocess.Popen(['cmd.exe', '/c', str(folder / '启动清影工坊.cmd'), '--no-browser'], cwd=folder, env=env,
+        process = subprocess.Popen(['cmd.exe', '/c', str(folder / '一键启动.cmd'), '--no-browser'], cwd=folder, env=env,
                                    stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
         url = 'http://127.0.0.1:18765'
         try:

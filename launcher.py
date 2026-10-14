@@ -87,7 +87,7 @@ def stop():
 def start(no_browser=False, lifetime=None):
     server = None
     if not (ROOT / "web/dist/index.html").is_file():
-        raise RuntimeError("网页文件缺失，请先运行「安装环境.cmd」。")
+        raise RuntimeError("网页文件缺失。源码请重新运行「一键启动.cmd」；绿色版请完整解压。")
     try:
         info = health()
         print("服务已在其他启动窗口运行；请关闭原窗口来停止服务。")
@@ -117,7 +117,7 @@ def start(no_browser=False, lifetime=None):
     print("视频抠像工作台已启动：" + URL, flush=True)
     print("处理设备：" + info["device"], flush=True)
     if not info["ready"]:
-        print("模型文件缺失，请先运行「安装环境.cmd」。")
+        print("模型文件缺失。源码请重新运行「一键启动.cmd」；绿色版请完整解压。")
     if not no_browser:
         if not webbrowser.open(URL):
             print("无法自动打开浏览器，请手动打开上方网址。")
