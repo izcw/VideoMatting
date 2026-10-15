@@ -121,6 +121,8 @@ def start(no_browser=False, lifetime=None):
     for address in addresses[1:]:
         print(f"其他局域网地址：http://{address}:{PORT}", flush=True)
     print("本机访问：" + URL, flush=True)
+    print('集成 API：' + access_url + '/api/v1；接口文档：' + access_url + '/docs', flush=True)
+    print('API 密钥：使用 VIDEOMATTING_API_TOKEN 环境变量，或查看程序目录 data/api-token.txt。', flush=True)
     if addresses:
         print("同一局域网设备可访问以上地址；视频由启动服务的这台电脑处理，任务与历史共用。", flush=True)
         print(f"其他设备无法访问时，请允许 Windows 防火墙的专用网络访问 TCP {PORT} 端口。", flush=True)

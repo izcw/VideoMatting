@@ -7,6 +7,7 @@ import tempfile
 import time
 import urllib.request
 import zipfile
+import uuid
 from pathlib import Path
 
 archive = Path(sys.argv[1]).resolve()
@@ -50,6 +51,14 @@ print(json.dumps({'imports':True,'isolated':True,'models':True,'inference':True,
     if check.returncode:
         raise RuntimeError(check.stderr.decode('utf-8', 'replace'))
     # 调用实际 CMD 入口，而不是仅调用 Python 启动函数。
+    # 准备下载测试夹具；单独的真实模型推理已在上面的检查中完成。
+    fixture_id = str(uuid.uuid4())
+    fixture = folder / 'data/jobs' / fixture_id
+    fixture.mkdir(parents=True)
+    sample = (folder / 'data/portable-test.webm').read_bytes()
+    (fixture / 'result.webm').write_bytes(sample)
+    (fixture / 'job.json').write_text(json.dumps(dict(id=fixture_id, name='下载测试.webm',
+        status='done', created_at=time.time(), progress=100, elapsed_seconds=0)), encoding='utf-8')
     log = root / 'startup.log'
     with log.open('wb') as output:
         process = subprocess.Popen(['cmd.exe', '/c', str(folder / '一键启动.cmd'), '--no-browser'], cwd=folder, env=env,
@@ -86,6 +95,25 @@ print(json.dumps({'imports':True,'isolated':True,'models':True,'inference':True,
                 opener.open(urllib.request.Request(lan_url + f'/api/jobs/{job["id"]}/cancel', data=b'',
                                                   headers={'Origin': lan_url}), timeout=10).close()
                 print('PASS: LAN page and real video upload', flush=True)
+            api_url = f'http://{addresses[0]}:18765' if addresses else url
+            token_file = root / 'client-token.txt'
+            token_file.write_text(env.get('VIDEOMATTING_API_TOKEN') or (folder / 'data/api-token.txt').read_text(), encoding='utf-8')
+            def remote_cli(*arguments):
+                result = subprocess.run([str(python), 'cli.py', '--server', api_url, '--token-file', str(token_file),
+                                         *arguments], cwd=folder, env=env, capture_output=True, timeout=30)
+                if result.returncode:
+                    raise RuntimeError(result.stderr.decode('utf-8', 'replace'))
+                return json.loads(result.stdout)
+            assert remote_cli('health')['api_version'] == '1'
+            uploaded = remote_cli('upload', str(folder / 'data/portable-test.webm'))
+            assert remote_cli('status', uploaded['id'])['id'] == uploaded['id']
+            assert remote_cli('cancel', uploaded['id'])['id'] == uploaded['id']
+            assert remote_cli('logs', '--job', uploaded['id'])['exists']
+            assert remote_cli('logs', '--name', 'server-error')['exists']
+            downloaded = root / 'cli-download.webm'
+            remote_cli('download', fixture_id, '--output', str(downloaded))
+            assert downloaded.read_bytes() == sample
+            print('PASS: authenticated CLI LAN upload, status, cancel, logs and byte-identical download', flush=True)
             # 结束实际持有 Job Object 的 Python 启动器，模拟关闭启动窗口。
             import psutil
             children = psutil.Process(process.pid).children(recursive=True)

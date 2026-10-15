@@ -16,7 +16,7 @@ def copy_tree(source, target):
 
 
 def write_entrypoints(cuda):
-    for name in ('一键启动.cmd', '停止服务.cmd', '检测系统.cmd', 'device_check.py', 'launcher.py'):
+    for name in ('一键启动.cmd', '停止服务.cmd', '检测系统.cmd', 'device_check.py', 'launcher.py', 'cli.py', 'API接口说明.md'):
         shutil.copy2(ROOT / name, DEST / name)
     text = (ROOT / 'packaging/使用说明.txt').read_text(encoding='utf-8')
     if cuda:

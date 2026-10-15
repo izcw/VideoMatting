@@ -6,6 +6,7 @@
 4. 保持启动窗口打开；关闭窗口会停止服务和当前处理。
 5. 也可双击「停止服务.cmd」关闭服务。
 6. GPU 未启用时运行「检测系统.cmd」，查看或提供 data\system-check.log 诊断日志。
+7. 系统对接或远程诊断可使用 cli.py 与 /api/v1，详见 API接口说明.md；密钥在 data\api-token.txt。
 
 无需安装 Python、Node.js 或下载模型，无需管理员权限。
 建议 Windows 10/11 64 位、32 GB 内存，保留足够磁盘空间。

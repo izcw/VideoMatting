@@ -7,6 +7,8 @@ import time
 import uuid
 import math
 import shutil
+import sys
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -85,6 +87,15 @@ def save(job_id: str, **changes):
         temporary = record.with_suffix(".tmp")
         temporary.write_text(json.dumps(jobs[job_id], ensure_ascii=False), encoding="utf-8")
         temporary.replace(record)
+        event = {key: value for key, value in changes.items()
+                 if key in {'status', 'stage', 'progress', 'error', 'memory_wait', 'completed_frames', 'total_frames'}}
+        if event:
+            event.update(time=time.time(), job_id=job_id)
+            path = DATA / job_id / 'events.jsonl'
+            if path.exists() and path.stat().st_size > 2 * 1024 * 1024:
+                path.replace(path.with_suffix('.previous.jsonl'))
+            with path.open('a', encoding='utf-8') as stream:
+                stream.write(json.dumps(event, ensure_ascii=False) + '\n')
 
 
 def record_resources(job_id: str, sample: dict):
@@ -142,6 +153,7 @@ def execute(job_id: str):
         save(job_id, status="cancelled", stage="已取消", elapsed_seconds=round(time.time() - started, 1))
     except Exception as error:
         logger.exception("处理失败 %s", job_id)
+        (DATA / job_id / 'error.log').write_text(traceback.format_exc(), encoding='utf-8')
         oom = isinstance(error, MemoryError) or any(word in str(error).lower() for word in ('not enough memory', 'out of memory', 'alloc_cpu', 'cannot allocate memory'))
         save(job_id, status="interrupted" if oom else "failed", stage="内存不足，已保留检查点" if oom else "处理失败",
              error="可用内存不足，已保留完成的步骤；关闭其他程序后点击任务恢复。" if oom else str(error),
@@ -153,6 +165,8 @@ def execute(job_id: str):
 
 @asynccontextmanager
 async def lifespan(_app):
+    from .integration import api_token
+    api_token()
     # 重启后不把中断任务假报成完成；文件留存，用户可重新上传重试。
     for file in DATA.glob("*/job.json"):
         try:
@@ -172,7 +186,7 @@ async def lifespan(_app):
     executor.shutdown(wait=False, cancel_futures=True)
 
 
-app = FastAPI(title="VideoMatting", lifespan=lifespan)
+app = FastAPI(title="VideoMatting", version=VERSION, lifespan=lifespan)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts())
 
 
@@ -415,6 +429,9 @@ def exported_media(job_id: str, name: str, download: bool = False):
     format_label = "AlphaMatte" if name == "matte" else "Background"
     return FileResponse(path, media_type="video/mp4", filename=f"VideoMatting-{format_label}-{job_id.replace('-', '')[:12]}.mp4" if download else None)
 
+
+from .integration import install_routes
+install_routes(app, sys.modules[__name__])
 
 DIST = ROOT / "web" / "dist"
 if DIST.is_dir():
