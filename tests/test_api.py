@@ -134,6 +134,20 @@ def test_cross_site_mutations_rejected(client):
                        files={"file": ("x.mp4", b"x")}).status_code == 202
 
 
+def test_lan_page_can_upload_but_external_hosts_and_origins_are_rejected(client):
+    from server.network import lan_addresses
+    addresses = lan_addresses()
+    if not addresses:
+        pytest.skip('本机没有局域网地址')
+    host = addresses[0] + ':8765'
+    assert client.get('/api/health', headers={'host': host}).status_code == 200
+    assert client.post('/api/jobs', headers={'host': host, 'origin': 'http://' + host},
+                       files={'file': ('lan.mp4', b'video')}).status_code == 202
+    assert client.post('/api/jobs', headers={'host': host, 'origin': 'https://attacker.example'},
+                       files={'file': ('lan.mp4', b'video')}).status_code == 403
+    assert client.get('/api/health', headers={'host': 'attacker.example'}).status_code == 400
+
+
 def test_path_and_arbitrary_assets_rejected(client):
     assert client.get("/api/jobs/not-a-uuid").status_code == 404
     job = client.post("/api/jobs", files={"file": ("x.mp4", b"x")}).json()

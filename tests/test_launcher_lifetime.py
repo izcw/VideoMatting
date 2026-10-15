@@ -36,6 +36,11 @@ def test_window_exit_stops_server():
                 pytest.fail(launcher.stdout.read().decode("utf-8", "replace"))
             time.sleep(.25)
         assert online()
+        from server.network import lan_addresses
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        for address in lan_addresses():
+            with opener.open(f'http://{address}:8765/api/health', timeout=3) as response:
+                assert response.status == 200
         launcher.kill()  # 模拟关闭窗口，无法依赖 Python finally。
         launcher.wait(timeout=5)
         for _ in range(40):

@@ -1,4 +1,4 @@
-"""源码首次启动时准备环境；绿色版直接使用内置运行环境。"""
+"""源码首次启动时准备环境；完整打包版直接使用内置运行环境。"""
 import argparse
 import shutil
 import subprocess

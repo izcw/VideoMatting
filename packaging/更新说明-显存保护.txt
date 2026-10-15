@@ -1,6 +1,6 @@
 VideoMatting 1.0.0 显存保护更新
 
-适用于当前 VideoMatting-1.0.0-win64 GPU＋CPU 二合一绿色版。
+适用于当前 VideoMatting-1.0.0-win64 GPU＋CPU 二合一完整打包版。
 
 1. 完成或取消当前处理任务，然后运行「停止服务.cmd」。
 2. 将更新包解压到包含「一键启动.cmd」的程序目录，覆盖 server 下的两个同名文件。

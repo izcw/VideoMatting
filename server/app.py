@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .pipeline import ROOT, Cancelled, engine, run_media
+from .network import allowed_hosts, lan_addresses
 
 DATA = ROOT / "data" / "jobs"
 DATA.mkdir(parents=True, exist_ok=True)
@@ -172,7 +173,7 @@ async def lifespan(_app):
 
 
 app = FastAPI(title="VideoMatting", lifespan=lifespan)
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts())
 
 
 @app.middleware("http")
@@ -182,7 +183,7 @@ async def local_write_guard(request: Request, call_next):
         origin = request.headers.get("origin")
         if origin and origin != f"{request.url.scheme}://{request.headers.get('host')}":
             from fastapi.responses import JSONResponse
-            return JSONResponse({"detail": "只允许本地页面操作。"}, status_code=403)
+            return JSONResponse({"detail": "只允许当前服务页面操作。"}, status_code=403)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     return response
@@ -207,7 +208,7 @@ def health():
     ready = MODEL_PATH.is_file() and (ROOT / "models/sam2.1_hiera_tiny.pt").is_file() and (ROOT / "vendor/SAM2/sam2").is_dir()
     return {"service": "py-VideoMatting", "ready": ready,
             "device": "CUDA GPU" if torch.cuda.is_available() else "CPU（处理较慢）",
-            "model": "MatAnyone 2", "version": VERSION}
+            "model": "MatAnyone 2", "version": VERSION, "lan_addresses": lan_addresses()}
 
 
 @app.get("/api/jobs")

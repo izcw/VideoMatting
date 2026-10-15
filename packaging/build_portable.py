@@ -20,7 +20,7 @@ def write_entrypoints(cuda):
         shutil.copy2(ROOT / name, DEST / name)
     text = (ROOT / 'packaging/使用说明.txt').read_text(encoding='utf-8')
     if cuda:
-        text = text.replace('Windows x64 CPU 绿色版', 'Windows x64 GPU + CPU 绿色版')
+        text = text.replace('Windows x64 CPU 完整打包版', 'Windows x64 GPU + CPU 完整打包版')
         text = text.replace('此包内置 CPU 运行库，即使有 NVIDIA 显卡也不会自动启用 CUDA。', '此包内置 PyTorch 2.14.1 + CUDA 13.0，自动检测 NVIDIA CUDA GPU；不可用时使用 CPU。\n使用 GPU 需安装兼容 CUDA 13.0 的 NVIDIA 驱动；无需另装 CUDA Toolkit。\nAMD/Intel 显卡不提供 GPU 加速，与当前源程序支持范围一致。\n显存不足仍可能暂停或报错，不会为了运行而自动降低分辨率或画质。\n当前打包机无 NVIDIA GPU，GPU 真机运行请在目标电脑验收。')
     (DEST / '使用说明.txt').write_bytes(text.replace('\r\n', '\n').replace('\n', '\r\n').encode('utf-8'))
 

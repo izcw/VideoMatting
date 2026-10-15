@@ -8,6 +8,7 @@ import time
 import urllib.request
 import webbrowser
 from pathlib import Path
+from server.network import lan_addresses
 
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.environ.get("VIDEOMATTING_PORT", "8765"))
@@ -87,7 +88,7 @@ def stop():
 def start(no_browser=False, lifetime=None):
     server = None
     if not (ROOT / "web/dist/index.html").is_file():
-        raise RuntimeError("网页文件缺失。源码请重新运行「一键启动.cmd」；绿色版请完整解压。")
+        raise RuntimeError("网页文件缺失。源码请重新运行「一键启动.cmd」；完整打包版请完整解压。")
     try:
         info = health()
         print("服务已在其他启动窗口运行；请关闭原窗口来停止服务。")
@@ -98,7 +99,7 @@ def start(no_browser=False, lifetime=None):
             if os.name == "nt":
                 flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
             server = subprocess.Popen([sys.executable, "-m", "uvicorn", "server.app:app",
-                                       "--host", "127.0.0.1", "--port", str(PORT)],
+                                       "--host", "0.0.0.0", "--port", str(PORT)],
                                       cwd=ROOT, stdin=subprocess.DEVNULL, stdout=output, stderr=errors,
                                       creationflags=flags, close_fds=True)
             lifetime.assign(server)
@@ -114,12 +115,22 @@ def start(no_browser=False, lifetime=None):
                 continue
         else:
             raise RuntimeError("服务启动超时，请查看 data/server-error.log。")
-    print("视频抠像工作台已启动：" + URL, flush=True)
+    addresses = lan_addresses()
+    access_url = f'http://{addresses[0]}:{PORT}' if addresses else URL
+    print("视频抠像工作台已启动：" + access_url, flush=True)
+    for address in addresses[1:]:
+        print(f"其他局域网地址：http://{address}:{PORT}", flush=True)
+    print("本机访问：" + URL, flush=True)
+    if addresses:
+        print("同一局域网设备可访问以上地址；视频由启动服务的这台电脑处理，任务与历史共用。", flush=True)
+        print(f"其他设备无法访问时，请允许 Windows 防火墙的专用网络访问 TCP {PORT} 端口。", flush=True)
+    else:
+        print("未发现局域网 IPv4 地址，请检查网络连接后重新启动。", flush=True)
     print("处理设备：" + info["device"], flush=True)
     if not info["ready"]:
-        print("模型文件缺失。源码请重新运行「一键启动.cmd」；绿色版请完整解压。")
+        print("模型文件缺失。源码请重新运行「一键启动.cmd」；完整打包版请完整解压。")
     if not no_browser:
-        if not webbrowser.open(URL):
+        if not webbrowser.open(access_url):
             print("无法自动打开浏览器，请手动打开上方网址。")
     return server
 

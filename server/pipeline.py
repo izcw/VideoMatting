@@ -159,7 +159,7 @@ class MattingEngine:
         if self.model is None:
             source = ROOT / "vendor" / "MatAnyone2"
             if not source.is_dir() or not MODEL_PATH.is_file():
-                raise RuntimeError("MatAnyone 2 未准备完成。源码请重新运行「一键启动.cmd」；绿色版请完整解压。")
+                raise RuntimeError("MatAnyone 2 未准备完成。源码请重新运行「一键启动.cmd」；完整打包版请完整解压。")
             progress(stage="加载 MatAnyone 2 精细抠像模型", progress=16)
             sys.path.insert(0, str(source))
             from hydra import compose, initialize_config_dir

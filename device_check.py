@@ -1,4 +1,4 @@
-"""源码与绿色版共用的系统检测入口。"""
+"""源码与完整打包版共用的系统检测入口。"""
 import contextlib
 import datetime
 import os
@@ -114,7 +114,7 @@ def diagnose():
             if torch.version.cuda.startswith('13.'):
                 print('CUDA 13.x 需要兼容的 R580 或更新 NVIDIA 驱动，请以官方兼容要求为准。')
         else:
-            print('GPU 加速需要 CUDA 版 PyTorch；二合一绿色版已内置。')
+            print('GPU 加速需要 CUDA 版 PyTorch；二合一完整打包版已内置。')
     models = ('models/matanyone2.pth', 'models/sam2.1_hiera_tiny.pt',
               'models/torch/hub/checkpoints/deeplabv3_mobilenet_v3_large-fc3c493d.pth')
     missing = [name for name in models if not (ROOT / name).is_file()]

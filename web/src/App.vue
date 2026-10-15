@@ -529,7 +529,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
     <p v-if="health && !health.ready" class="notice">
-      模型尚未准备完成。源码请重新运行一键启动.cmd，绿色版请完整解压后启动；视频不会上传到云端。
+      模型尚未准备完成。源码请重新运行一键启动.cmd，完整打包版请完整解压后启动；视频不会上传到云端。
     </p>
     <p v-if="error || job?.error" class="error" role="alert">
       {{ error || job?.error }}

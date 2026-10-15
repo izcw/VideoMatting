@@ -1,4 +1,4 @@
-"""在随机路径解压并验证绿色包；使用测试端口，不触碰已有服务。"""
+"""在随机路径解压并验证完整打包版；使用测试端口，不触碰已有服务。"""
 import json
 import os
 import subprocess
@@ -10,7 +10,7 @@ import zipfile
 from pathlib import Path
 
 archive = Path(sys.argv[1]).resolve()
-with tempfile.TemporaryDirectory(prefix='清影 绿色版验收 ') as temporary:
+with tempfile.TemporaryDirectory(prefix='清影 完整打包版验收 ') as temporary:
     root = Path(temporary)
     with zipfile.ZipFile(archive) as package:
         package.extractall(root)
@@ -67,8 +67,25 @@ print(json.dumps({'imports':True,'isolated':True,'models':True,'inference':True,
                         raise RuntimeError(log.read_text(encoding='utf-8', errors='replace'))
                     time.sleep(1)
             else:
-                raise RuntimeError('绿色版启动超时')
+                raise RuntimeError('完整打包版启动超时')
             assert urllib.request.urlopen(url).status == 200
+            addresses = health.get('lan_addresses', [])
+            if addresses:
+                lan_url = f'http://{addresses[0]}:18765'
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                assert opener.open(lan_url, timeout=5).status == 200
+                # 真实局域网 HTTP 上传有效视频；任务只用于该临时目录验收。
+                boundary = 'VideoMattingPortableVerification'
+                body = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="lan.webm"\r\n'
+                        'Content-Type: video/webm\r\n\r\n').encode() + (folder / 'data/portable-test.webm').read_bytes() + f'\r\n--{boundary}--\r\n'.encode()
+                request = urllib.request.Request(lan_url + '/api/jobs', data=body, headers={
+                    'Origin': lan_url, 'Content-Type': f'multipart/form-data; boundary={boundary}'})
+                with opener.open(request, timeout=10) as response:
+                    assert response.status == 202
+                    job = json.load(response)
+                opener.open(urllib.request.Request(lan_url + f'/api/jobs/{job["id"]}/cancel', data=b'',
+                                                  headers={'Origin': lan_url}), timeout=10).close()
+                print('PASS: LAN page and real video upload', flush=True)
             # 结束实际持有 Job Object 的 Python 启动器，模拟关闭启动窗口。
             import psutil
             children = psutil.Process(process.pid).children(recursive=True)
