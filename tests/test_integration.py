@@ -74,7 +74,8 @@ def test_hidden_task_access_and_bounded_allowlisted_logs(remote):
     assert client.get('/api/v1/logs/api-token').status_code == 422
     assert client.get('/api/v1/logs/server?lines=3000').status_code == 422
     (root / 'server-error.log').write_text('文' * 300000, encoding='utf-8')
-    assert len(client.get('/api/v1/logs/server-error').json()['text'].encode()) <= 256 * 1024
+    tail = client.get('/api/v1/logs/server-error').json()['text']
+    assert tail and len(tail.encode()) <= 256 * 1024
 
 
 def test_failure_keeps_error_log_and_does_not_log_keys(remote, monkeypatch):
@@ -139,3 +140,75 @@ def test_cli_calls_same_endpoints_and_download_does_not_overwrite(remote, monkey
     with pytest.raises(FileExistsError):
         client.download(job['id'], output=target)
     assert target.read_bytes() == b'valid-result'
+
+
+def test_incomplete_cli_download_never_publishes_or_overwrites(monkeypatch, tmp_path):
+    client = Client('http://testserver', 'test-token')
+    monkeypatch.setattr(client, 'json', lambda *args, **kwargs: {'download': '/api/v1/jobs/test/download'})
+    class Incomplete:
+        headers = {'Content-Length': '100'}
+        def __init__(self): self.sent = False
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self, size):
+            if self.sent: return b''
+            self.sent = True
+            return b'partial'
+    monkeypatch.setattr(client, 'request', lambda *args, **kwargs: Incomplete())
+    target = tmp_path / 'result.webm'
+    with pytest.raises(OSError, match='不完整'):
+        client.download('test', output=target)
+    assert not target.exists() and not list(tmp_path.glob('*.part'))
+    target.write_bytes(b'old-valid-result')
+    with pytest.raises(OSError, match='不完整'):
+        client.download('test', output=target, overwrite=True)
+    assert target.read_bytes() == b'old-valid-result'
+
+
+def test_cli_does_not_forward_key_on_redirect():
+    import http.server
+    import urllib.error
+    leaked = []
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path.endswith('/health'):
+                self.send_response(302)
+                self.send_header('Location', '/leak')
+                self.end_headers()
+            else:
+                leaked.append(self.headers.get('Authorization'))
+                self.send_response(200)
+                self.end_headers()
+        def log_message(self, *args): pass
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = Client(f'http://127.0.0.1:{server.server_port}', 'do-not-leak')
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            client.json('/api/v1/health')
+        assert caught.value.code == 302 and leaked == []
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_release_versions_agree():
+    from pathlib import Path
+    import cli
+    root = Path(__file__).resolve().parents[1]
+    assert backend.VERSION == cli.VERSION == json.loads((root / 'web/package.json').read_text())['version'] == '1.1.0'
+    assert f'title 清影工坊 {backend.VERSION}' in (root / '一键启动.cmd').read_text(encoding='utf-8')
+    assert backend.app.openapi()['info']['version'] == backend.VERSION
+
+
+def test_cli_output_is_utf8_even_when_redirected_with_legacy_encoding():
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    env = {**os.environ, 'PYTHONIOENCODING': 'gbk'}
+    result = subprocess.run([sys.executable, 'cli.py', '--help'], cwd=root, env=env, capture_output=True, check=True)
+    assert '远程任务与诊断客户端' in result.stdout.decode('utf-8')

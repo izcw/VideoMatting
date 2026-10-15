@@ -180,7 +180,7 @@ def test_failure_surfaces_error(client, monkeypatch):
 def test_server_responds_with_local_page(client):
     assert client.get("/").status_code == 200
     assert client.get("/api/health").json()["service"] == "py-VideoMatting"
-    assert client.get("/api/health").json()['version'] == '1.0.0'
+    assert client.get("/api/health").json()['version'] == '1.1.0'
 
 
 def test_clear_history_removes_files_and_job_access(client):

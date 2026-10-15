@@ -1,6 +1,7 @@
 """VideoMatting 远程客户端：仅使用 Python 标准库，无需模型或 GPU 依赖。"""
 import argparse
 import http.client
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+
+VERSION = '1.1.0'
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, message, headers, new_url):
+        # 只连接用户指定的服务，不把访问密钥跟随重定向发送给其他地址。
+        return None
 
 
 class Client:
@@ -23,7 +32,7 @@ class Client:
         self.token = token
         self.timeout = timeout
         # 局域网调用不经过工作机的系统代理。
-        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
     def request(self, path, method='GET', data=None):
         if not path.startswith('/api/v1/'):
@@ -97,24 +106,33 @@ class Client:
         if target.exists() and not overwrite:
             raise FileExistsError('目标文件已存在；请指定其他 --output，或使用 --overwrite。')
         temporary = target.with_name(target.name + '.' + secrets.token_hex(4) + '.part')
+        digest = hashlib.sha256()
+        received = 0
         try:
             with self.request(links['download']) as response, temporary.open('xb') as stream:
+                expected = getattr(response, 'headers', {}).get('Content-Length')
                 while chunk := response.read(1024 * 1024):
                     stream.write(chunk)
+                    digest.update(chunk)
+                    received += len(chunk)
+                if expected is not None and received != int(expected):
+                    raise OSError('下载内容不完整，未发布结果文件，请重试。')
             if overwrite:
                 os.replace(temporary, target)
+            elif os.name == 'nt':
+                # Windows rename 为原子、不覆盖发布，避免再复制一次完整视频。
+                os.rename(temporary, target)
             else:
-                # 创建时再次检查存在性，避免并发下载覆盖另一份文件。
-                with target.open('xb') as stream, temporary.open('rb') as source:
-                    while chunk := source.read(1024 * 1024):
-                        stream.write(chunk)
+                # POSIX link 是同目录下的排他发布，目标已存在时不会被覆盖。
+                os.link(temporary, target)
         finally:
             temporary.unlink(missing_ok=True)
-        return {'file': str(target.resolve()), 'bytes': target.stat().st_size}
+        return {'file': str(target.resolve()), 'bytes': received, 'sha256': digest.hexdigest()}
 
 
 def parser():
     result = argparse.ArgumentParser(description='VideoMatting 远程任务与诊断客户端')
+    result.add_argument('--version', action='version', version='VideoMatting CLI ' + VERSION)
     result.add_argument('--server', default=os.environ.get('VIDEOMATTING_SERVER', 'http://127.0.0.1:8765'))
     result.add_argument('--token-file', help='显卡电脑 data/api-token.txt 的本地副本；也可设置 VIDEOMATTING_API_TOKEN')
     commands = result.add_subparsers(dest='command', required=True)
@@ -203,4 +221,7 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8')
     raise SystemExit(main())

@@ -1,4 +1,4 @@
-清影工坊 VideoMatting 1.0.0 — Windows x64 CPU 完整打包版
+清影工坊 VideoMatting 1.1.0 — Windows x64 CPU 完整打包版
 
 1. 将整个压缩包解压到可写目录，不要直接在压缩包内运行。
 2. 双击「一键启动.cmd」，浏览器会自动打开。

@@ -53,9 +53,9 @@ def tail_log(path, lines):
         size = stream.seek(0, 2)
         offset = max(0, size - 256 * 1024)
         stream.seek(offset)
-        text = stream.read().decode('utf-8', errors='replace')
+        text = stream.read().decode('utf-8', errors='ignore')
     entries = text.splitlines()
-    if offset and entries:
+    if offset and len(entries) > 1:
         entries = entries[1:]
     return {'exists': True, 'text': '\n'.join(entries[-lines:]),
             'truncated': offset > 0 or len(entries) > lines}
@@ -63,7 +63,11 @@ def tail_log(path, lines):
 
 def diagnostic_status():
     with _diagnostic_lock:
-        return dict(_diagnostic)
+        result = dict(_diagnostic)
+    result['log_url'] = '/api/v1/logs/system-check'
+    if result.get('started_at'):
+        result['elapsed_seconds'] = round(max(0, result.get('finished_at', time.time()) - result['started_at']), 1)
+    return result
 
 
 def start_diagnostic():

@@ -33,7 +33,7 @@ lock = threading.RLock()
 executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="matting")
 export_lock = threading.Lock()
 HISTORY_LIMIT = 10
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 
 def stored_elapsed(job: dict) -> float:

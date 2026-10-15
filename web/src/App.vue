@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { version as appVersion } from '../package.json';
 import {
   computed,
   nextTick,
@@ -744,6 +745,6 @@ onBeforeUnmount(() => {
       精细抠像不等于画面超分。请检查发丝、手指、衣袖和裙摆；复杂遮挡、道具和多人素材可能需要进一步修正。CPU
       模式会明显慢于 NVIDIA GPU。
     </p>
-    <footer class="copyright">©2026 izcw <span class="app-version">VideoMatting v1.0.0</span></footer>
+    <footer class="copyright">©2026 izcw <span class="app-version">VideoMatting v{{ appVersion }}</span></footer>
   </main>
 </template>

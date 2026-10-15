@@ -8,6 +8,7 @@ import time
 import urllib.request
 import zipfile
 import uuid
+import hashlib
 from pathlib import Path
 
 archive = Path(sys.argv[1]).resolve()
@@ -16,6 +17,14 @@ with tempfile.TemporaryDirectory(prefix='清影 完整打包版验收 ') as temp
     with zipfile.ZipFile(archive) as package:
         package.extractall(root)
     folder = next(root.iterdir())
+    build_info = json.loads((folder / 'build-info.json').read_text(encoding='utf-8'))
+    manifest = json.loads((folder / '文件校验.json').read_text(encoding='utf-8'))
+    for name, expected_hash in manifest.items():
+        path = (folder / name).resolve()
+        assert path.is_relative_to(folder.resolve())
+        with path.open('rb') as stream:
+            assert hashlib.file_digest(stream, 'sha256').hexdigest() == expected_hash, name
+    print(f'PASS: SHA-256 integrity of {len(manifest)} packaged files', flush=True)
     python = folder / 'runtime/python.exe'
     env = {k: v for k, v in os.environ.items() if not k.startswith(('PYTHON', 'CONDA', 'VIRTUAL_ENV', 'HF_', 'TORCH_'))}
     env.update(PATH=str(Path(os.environ['SystemRoot']) / 'System32'), VIDEOMATTING_PORT='18765', PYTHONUTF8='1')
@@ -69,7 +78,7 @@ print(json.dumps({'imports':True,'isolated':True,'models':True,'inference':True,
                 try:
                     with urllib.request.urlopen(url + '/api/health', timeout=1) as response:
                         health = json.load(response)
-                    assert health['ready'] and health['version'] == '1.0.0'
+                    assert health['ready'] and health['version'] == build_info['version']
                     break
                 except OSError:
                     if process.poll() is not None:
@@ -104,15 +113,19 @@ print(json.dumps({'imports':True,'isolated':True,'models':True,'inference':True,
                 if result.returncode:
                     raise RuntimeError(result.stderr.decode('utf-8', 'replace'))
                 return json.loads(result.stdout)
+            cli_version = subprocess.check_output([str(python), 'cli.py', '--version'], cwd=folder, env=env, timeout=10).decode('utf-8').strip()
+            assert cli_version == 'VideoMatting CLI ' + build_info['version']
             assert remote_cli('health')['api_version'] == '1'
+            assert remote_cli('health')['version'] == build_info['version']
             uploaded = remote_cli('upload', str(folder / 'data/portable-test.webm'))
             assert remote_cli('status', uploaded['id'])['id'] == uploaded['id']
             assert remote_cli('cancel', uploaded['id'])['id'] == uploaded['id']
             assert remote_cli('logs', '--job', uploaded['id'])['exists']
             assert remote_cli('logs', '--name', 'server-error')['exists']
             downloaded = root / 'cli-download.webm'
-            remote_cli('download', fixture_id, '--output', str(downloaded))
+            receipt = remote_cli('download', fixture_id, '--output', str(downloaded))
             assert downloaded.read_bytes() == sample
+            assert receipt['sha256'] == hashlib.sha256(sample).hexdigest()
             print('PASS: authenticated CLI LAN upload, status, cancel, logs and byte-identical download', flush=True)
             # 结束实际持有 Job Object 的 Python 启动器，模拟关闭启动窗口。
             import psutil

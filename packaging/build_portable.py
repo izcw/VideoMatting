@@ -8,7 +8,8 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DEST = ROOT / 'releases' / 'VideoMatting-1.0.0-win64'
+VERSION = json.loads((ROOT / 'web/package.json').read_text(encoding='utf-8'))['version']
+DEST = ROOT / 'releases' / f'VideoMatting-{VERSION}-win64'
 
 
 def copy_tree(source, target):
@@ -54,7 +55,7 @@ def main():
     parser.add_argument('--refresh-entrypoints', action='store_true', help='同步已有发布目录的三个入口并重新压缩')
     args = parser.parse_args()
     if not args.cuda:
-        DEST = ROOT / 'releases' / 'VideoMatting-1.0.0-win64-cpu'
+        DEST = ROOT / 'releases' / f'VideoMatting-{VERSION}-win64-cpu'
     if args.refresh_entrypoints:
         build = json.loads((DEST / 'build-info.json').read_text(encoding='utf-8'))
         if bool(build.get('cuda')) != args.cuda:
@@ -121,7 +122,7 @@ def main():
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / 'models' / name, target)
     write_entrypoints(args.cuda)
-    (DEST / 'build-info.json').write_text(json.dumps(dict(version='1.0.0', torch='2.14.1', torchvision='0.29.1', cuda='13.0' if args.cuda else None, models_bundled=True), indent=2), encoding='utf-8')
+    (DEST / 'build-info.json').write_text(json.dumps(dict(version=VERSION, torch='2.14.1', torchvision='0.29.1', cuda='13.0' if args.cuda else None, models_bundled=True), indent=2), encoding='utf-8')
     archive_package()
 
 
