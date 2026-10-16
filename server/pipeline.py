@@ -15,6 +15,8 @@ import numpy as np
 from PIL import Image
 import imageio_ffmpeg
 
+from .preview import publish_preview
+
 ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("TORCH_HOME", str(ROOT / "models" / "torch"))
 os.environ.setdefault("HF_HOME", str(ROOT / "models" / "huggingface"))
@@ -306,8 +308,7 @@ class MattingEngine:
                     preview = Image.fromarray(image).convert('RGBA')
                     preview.putalpha(Image.fromarray(np.round(np.clip(alpha, 0, 1) * 255).astype(np.uint8)))
                     preview.thumbnail((720, 720))  # 仅进度预览缩略图，母版不缩小。
-                    preview.save(folder / 'preview.tmp', format='PNG', compress_level=1)
-                    (folder / 'preview.tmp').replace(folder / 'preview.png')
+                    publish_preview(folder, preview)
                 frame_times.append(time.monotonic() - frame_started)
                 progress(stage="逐帧精细抠像", progress=25 + 60 * (index + 1) / len(frames),
                          completed_frames=index + 1, total_frames=len(frames), preview_frame=index + 1,

@@ -1,18 +1,18 @@
 # VideoMatting 本地视频抠像工作台
 
-当前版本：1.1.0。包含局域网操作、带密钥的集成 API、独立 CLI 和远程诊断日志。此版本优化了 CLI 下载：校验响应长度、完整下载后原子发布、返回 SHA-256，不完整下载不会覆盖已有文件；修复超长单行日志读取为空的问题。完整打包版发布验收增加所有文件的 SHA-256 校验与版本一致性检查。
+当前版本：1.1.1。修复 Windows 实时预览图片被读取时无法替换、导致任务失败的问题：预览使用短时读写锁和内存响应，外部占用时重试或跳过此次缩略图更新，不影响抠像继续；历史任务显示上限增加至 20 条。抠像分辨率、精度和导出质量参数不变。包含局域网操作、带密钥的集成 API、独立 CLI 和远程诊断日志；保留下载完整性校验和发布文件 SHA-256 校验。
 
-白紫新版：默认预览自定义色为蓝色 `#3b82f6`，CPU 模式提示建议使用 NVIDIA 显卡设备。历史入口仅保留最近十条，超过后移除列表入口，所有素材保留。浏览器刷新后显示空白上传工作区，刷新前的任务保留在最近任务中，不会停止后台处理；点击记录再查看进度或结果。上传中断的残缺原片不能恢复，需要重新上传。
+白紫新版：默认预览自定义色为蓝色 `#3b82f6`，CPU 模式提示建议使用 NVIDIA 显卡设备。历史入口仅保留最近二十条，超过后移除列表入口，所有素材保留。浏览器刷新后显示空白上传工作区，刷新前的任务保留在最近任务中，不会停止后台处理；点击记录再查看进度或结果。上传中断的残缺原片不能恢复，需要重新上传。
 
 1.0.0：支持单条删除历史任务及其本地处理文件、CPU/内存/NVIDIA GPU 监控、处理中的透明缩略图、拖柄上方时间、默认静音播放与可选保留音频导出。声音只由左侧播放，避免双重音轨。保留音频导出直接复制已生成的视频流，附加原片音轨；不会再次压缩画面。无音轨原片仍为静音。失败、中断任务显示已记录的处理用时；突然退出时以最后一次持久化的时间为准，不计服务停机时间。上传支持 MP4、MOV、WebM、MKV。
 
 ### Windows 完整打包版
 
-推荐完整 GPU＋CPU 包：`releases/VideoMatting-1.1.0-win64.zip`（约 2.57 GB）。包含 PyTorch 2.14.1+cu130 / torchvision 0.29.1+cu130 和全部模型，后端代码与源程序一致；兼容 NVIDIA GPU 时使用 CUDA，否则 CPU。适用于 RTX 4060 等支持的 GPU，目标机需兼容 CUDA 13.0 的 NVIDIA 驱动，无需安装 CUDA Toolkit；不支持 AMD/Intel GPU 加速。`检测系统.cmd` 可在目标电脑实际测试 CUDA 运算。构建命令追加 `--cuda`，需先在 `releases/cuda-wheels` 下载对应官方 Windows Python 3.13 wheel。已从压缩包在隔离路径验证 CUDA 版运行库导入、CPU 回退推理、编码、CMD 启停；本机无 NVIDIA 显卡，尚未完成 GPU 真机推理验收。显存容量仍限制可处理的视频尺寸，GPU 支持不代表 8 GB 显存可处理所有 4K 视频。
+推荐完整 GPU＋CPU 包：`releases/VideoMatting-1.1.1-win64.zip`（约 2.57 GB）。包含 PyTorch 2.14.1+cu130 / torchvision 0.29.1+cu130 和全部模型，后端代码与源程序一致；兼容 NVIDIA GPU 时使用 CUDA，否则 CPU。适用于 RTX 4060 等支持的 GPU，目标机需兼容 CUDA 13.0 的 NVIDIA 驱动，无需安装 CUDA Toolkit；不支持 AMD/Intel GPU 加速。`检测系统.cmd` 可在目标电脑实际测试 CUDA 运算。构建命令追加 `--cuda`，需先在 `releases/cuda-wheels` 下载对应官方 Windows Python 3.13 wheel。已从压缩包在隔离路径验证 CUDA 版运行库导入、CPU 回退推理、编码、CMD 启停；本机无 NVIDIA 显卡，尚未完成 GPU 真机推理验收。显存容量仍限制可处理的视频尺寸，GPU 支持不代表 8 GB 显存可处理所有 4K 视频。
 
 当前只发布上述 GPU＋CPU 合一包，不添加 `-gpu` 后缀；如单独构建 CPU 包，其名称增加 `-cpu` 后缀。完整解压后双击「一键启动.cmd」，无需安装 Python、Node.js 或下载模型。关闭启动窗口即停止服务。包含全部三个模型、不包含用户视频和历史任务；界面、功能与处理算法直接使用当前源程序，不另做精简版。请保留第三方许可，MatAnyone2 的 S-Lab 许可限制商业用途。
 
-构建：`.venv\Scripts\python.exe packaging/build_portable.py --cuda`（已有发布目录时拒绝覆盖）。验证：`.venv\Scripts\python.exe packaging/verify_portable.py releases/VideoMatting-1.1.0-win64.zip`。验证会在临时中文空格目录解压、清理开发环境变量，以独立端口测试导入、模型推理、FFmpeg、CMD 启动及窗口关闭后服务退出；不会停止 8765 上已有服务。已通过同一电脑的隔离目录验证，尚未在另一台干净 Windows 电脑验证。
+构建：`.venv\Scripts\python.exe packaging/build_portable.py --cuda`（已有发布目录时拒绝覆盖）。验证：`.venv\Scripts\python.exe packaging/verify_portable.py releases/VideoMatting-1.1.1-win64.zip`。验证会在临时中文空格目录解压、清理开发环境变量，以独立端口测试导入、模型推理、FFmpeg、CMD 启动及窗口关闭后服务退出；不会停止 8765 上已有服务。已通过同一电脑的隔离目录验证，尚未在另一台干净 Windows 电脑验证。
 
 ### 原画质性能优化（2026-10-14）
 

@@ -5,7 +5,7 @@ set PYTHONIOENCODING=utf-8
 cd /d "%~dp0"
 set PYTHONHOME=
 set PYTHONPATH=
-title 清影工坊 1.1.0
+title 清影工坊 1.1.1
 if exist "runtime\python.exe" goto portable
 if not exist ".venv\Scripts\python.exe" goto setup
 ".venv\Scripts\python.exe" setup_environment.py --check

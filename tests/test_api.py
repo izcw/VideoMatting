@@ -52,6 +52,20 @@ def test_progress_preview_is_available_before_completion(client):
     assert response.headers['cache-control'] == 'no-store'
 
 
+def test_preview_response_releases_file_before_sending(client):
+    from PIL import Image
+    from server.preview import publish_preview
+    job = client.post('/api/jobs', files={'file': ('test.mp4', b'original')}).json()
+    folder = module.DATA / job['id']
+    assert client.get(f"/api/jobs/{job['id']}/preview-frame").status_code == 404
+    assert publish_preview(folder, Image.new('RGBA', (8, 8), 'red'))
+    original = (folder / 'preview.png').read_bytes()
+    response = module.preview_frame(job['id'])
+    assert publish_preview(folder, Image.new('RGBA', (8, 8), 'blue'))
+    assert response.body == original
+    assert (folder / 'preview.png').read_bytes() != original
+
+
 def test_delete_failure_keeps_task_for_retry(client, monkeypatch):
     job = client.post('/api/jobs', files={'file': ('test.mp4', b'original')}).json()
     module.save(job['id'], status='failed')
@@ -180,7 +194,7 @@ def test_failure_surfaces_error(client, monkeypatch):
 def test_server_responds_with_local_page(client):
     assert client.get("/").status_code == 200
     assert client.get("/api/health").json()["service"] == "py-VideoMatting"
-    assert client.get("/api/health").json()['version'] == '1.1.0'
+    assert client.get("/api/health").json()['version'] == '1.1.1'
 
 
 def test_clear_history_removes_files_and_job_access(client):
@@ -208,15 +222,15 @@ def test_clear_history_refuses_active_tasks_and_cross_site(client):
     assert len(client.get('/api/jobs').json()) == 1
 
 
-def test_history_keeps_latest_ten_without_deleting_material(client):
+def test_history_keeps_latest_twenty_without_deleting_material(client):
     ids = []
-    for index in range(12):
+    for index in range(22):
         job = client.post('/api/jobs', files={'file': (f'{index}.mp4', b'original')}).json()
         ids.append(job['id'])
         module.save(job['id'], status='done')
     visible = client.get('/api/jobs').json()
-    assert len(visible) == 10
-    assert {j['id'] for j in visible} == set(ids[-10:])
+    assert len(visible) == 20
+    assert {j['id'] for j in visible} == set(ids[-20:])
     assert module.jobs[ids[0]]['history_hidden']
     assert (module.DATA / ids[0] / 'source').read_bytes() == b'original'
 

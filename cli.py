@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-VERSION = '1.1.0'
+VERSION = '1.1.1'
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):

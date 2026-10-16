@@ -16,12 +16,13 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .pipeline import ROOT, Cancelled, engine, run_media
 from .network import allowed_hosts, lan_addresses
+from .preview import read_preview
 
 DATA = ROOT / "data" / "jobs"
 DATA.mkdir(parents=True, exist_ok=True)
@@ -32,8 +33,8 @@ cancel_events: dict[str, threading.Event] = {}
 lock = threading.RLock()
 executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="matting")
 export_lock = threading.Lock()
-HISTORY_LIMIT = 10
-VERSION = "1.1.0"
+HISTORY_LIMIT = 20
+VERSION = "1.1.1"
 
 
 def stored_elapsed(job: dict) -> float:
@@ -250,10 +251,11 @@ def delete_job(job_id: str):
 @app.get('/api/jobs/{job_id}/preview-frame')
 def preview_frame(job_id: str):
     lookup(job_id)
-    path = DATA / job_id / 'preview.png'
-    if not path.is_file():
+    try:
+        content = read_preview(DATA / job_id)
+    except FileNotFoundError:
         raise HTTPException(404, '首帧尚未生成')
-    return FileResponse(path, media_type='image/png', headers={'Cache-Control': 'no-store'})
+    return Response(content, media_type='image/png', headers={'Cache-Control': 'no-store'})
 
 
 @app.post("/api/history/clear")

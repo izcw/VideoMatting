@@ -198,7 +198,7 @@ def test_release_versions_agree():
     from pathlib import Path
     import cli
     root = Path(__file__).resolve().parents[1]
-    assert backend.VERSION == cli.VERSION == json.loads((root / 'web/package.json').read_text())['version'] == '1.1.0'
+    assert backend.VERSION == cli.VERSION == json.loads((root / 'web/package.json').read_text())['version'] == '1.1.1'
     assert f'title 清影工坊 {backend.VERSION}' in (root / '一键启动.cmd').read_text(encoding='utf-8')
     assert backend.app.openapi()['info']['version'] == backend.VERSION
 
